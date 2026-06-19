@@ -1,0 +1,44 @@
+name: 'AI Code Reviewer'
+description: 'AI-powered code review para PRs de GitHub, configurable por proyecto y tech stack.'
+author: 'Giolabs'
+
+inputs:
+  provider:
+    description: 'LLM provider (override de .ai-review.yml). Opciones: openai, anthropic, gemini, ollama'
+    required: false
+  model:
+    description: 'Modelo del LLM (override de .ai-review.yml)'
+    required: false
+  language:
+    description: 'Idioma del review: es | en'
+    required: false
+    default: 'es'
+  tech:
+    description: 'Forzar tech stack (override de auto-deteccion)'
+    required: false
+  config-path:
+    description: 'Path al archivo de configuracion'
+    required: false
+  rules-path:
+    description: 'Path al archivo de reglas custom (markdown)'
+    required: false
+  min-severity:
+    description: 'Severidad minima a reportar: critical | major | minor | info | nitpick'
+    required: false
+    default: 'minor'
+  dry-run:
+    description: 'No postear review al PR, solo imprimir resultado'
+    required: false
+    default: 'false'
+
+outputs:
+  review-posted:
+    description: 'Si el review fue posteado al PR'
+  findings-count:
+    description: 'Cantidad de findings reportados'
+  recommendation:
+    description: 'Recomendacion del modelo: approve, comment, o request_changes'
+
+runs:
+  using: 'node20'
+  main: 'dist/action.js'

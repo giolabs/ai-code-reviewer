@@ -1,0 +1,55 @@
+{
+  "name": "ai-code-reviewer",
+  "version": "0.1.0",
+  "description": "AI-powered code review for GitHub Pull Requests, configurable per project/tech stack. Powered by OpenAI.",
+  "type": "module",
+  "bin": {
+    "ai-code-reviewer": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/cli.js",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "code-review",
+    "ai",
+    "openai",
+    "gpt",
+    "github-actions",
+    "pull-request",
+    "cli",
+    "static-analysis"
+  ],
+  "author": "Giolabs",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/generative-ai": "^0.21.0",
+    "@octokit/rest": "^21.0.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "js-yaml": "^4.1.0",
+    "openai": "^4.67.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

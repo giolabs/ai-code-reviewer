@@ -1,0 +1,37 @@
+# Ejemplo de .ai-review.yml — copiá esto a la raíz de tu repo y ajustá.
+
+model: gpt-4o-mini
+language: es
+# tech: nestjs  # si no se especifica, se auto-detecta
+rules: ./code-review-rules.md
+
+ignore:
+  - node_modules/**
+  - dist/**
+  - "*.lock"
+  - "*.min.js"
+  - "*.snap"
+  - prisma/migrations/**
+  - "**/*.generated.ts"
+
+minSeverity: minor
+maxFileSize: 100000
+
+checks:
+  security: true
+  performance: true
+  maintainability: true
+  testing: true
+  documentation: false
+  style: false
+  bug-risk: true
+  architecture: true
+
+inlineComments: true
+summaryComment: true
+maxInlineComments: 15
+
+customInstructions: |
+  Este proyecto sigue Clean Architecture con DDD. Cualquier import de capa
+  de dominio hacia infraestructura es un finding 'major'.
+  Los nombres de archivos deben ser kebab-case y los nombres de clase PascalCase.

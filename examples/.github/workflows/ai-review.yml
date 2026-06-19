@@ -1,0 +1,36 @@
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  review:
+    # Saltar drafts (cambiar a `false` para revisar drafts también)
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      # Necesarios para que el bot pueda postear reviews y comentarios
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Necesitamos al menos el commit base para que git diff funcione
+          # si querés correr review-diff localmente; review-pr usa la API.
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run AI Code Review
+        run: npx -y ai-code-reviewer@latest review-pr
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Opcional: usar un modelo distinto
+          # AI_REVIEWER_MODEL: gpt-4o
