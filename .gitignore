@@ -18,3 +18,8 @@ coverage/
 # Logs
 *.log
 npm-debug.log*
+
+# Docs site build output and local deps
+docs/dist/
+docs/node_modules/
+docs/.astro/

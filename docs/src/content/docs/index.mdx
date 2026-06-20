@@ -1,0 +1,43 @@
+---
+title: AI Code Reviewer
+description: AI-powered code reviewer for GitHub PRs — supports OpenAI, Anthropic, Gemini and Ollama.
+template: splash
+hero:
+  title: AI Code Reviewer
+  tagline: Drop it into GitHub Actions and get AI-powered PR reviews with inline comments and a full summary. Supports OpenAI, Anthropic, Gemini, and Ollama.
+  actions:
+    - text: Get Started
+      link: /ai-code-reviewer/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/giolabs/ai-code-reviewer
+      icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+```bash
+npx -y ai-code-reviewer@latest review-pr
+```
+
+<CardGrid>
+  <Card title="Multi-provider" icon="puzzle">
+    Supports OpenAI, Anthropic, Gemini, and Ollama. Switch providers with one field in `.ai-review.yml` — no workflow changes needed.
+  </Card>
+  <Card title="Dependency graph context" icon="bars">
+    On JS/TS stacks, analyzes imports and callers of changed files and injects the graph into the LLM prompt to catch bugs outside the diff.
+  </Card>
+  <Card title="Inline comments + summary" icon="comment">
+    Posts findings directly on PR diff lines with color-coded severity. Findings outside the diff go to the PR summary.
+  </Card>
+  <Card title="Structured output" icon="approve-check">
+    Never parses raw LLM text. OpenAI uses `response_format: json_schema`; other providers receive explicit formatting instructions.
+  </Card>
+  <Card title="Auto tech stack detection" icon="magnifier">
+    Detects NestJS, Next.js, React, TypeScript, Node, Flutter, and Laravel from `package.json` and loads built-in rules for each.
+  </Card>
+  <Card title="Custom rules" icon="pencil">
+    Drop a `code-review-rules.md` in your repo and reference it from `.ai-review.yml`. Your rules override the built-in ones.
+  </Card>
+</CardGrid>
