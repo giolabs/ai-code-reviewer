@@ -3,13 +3,13 @@ import { Octokit } from '@octokit/rest';
 import type { ChangedFile, PullRequestContext, ReviewFinding } from './types.js';
 
 /**
- * Lee el contexto del PR desde las variables de entorno que GitHub Actions
- * inyecta. Si no estamos en Actions, devuelve null.
+ * Reads PR context from the environment variables injected by GitHub Actions.
+ * Returns null if not running inside Actions.
  *
- * Variables relevantes:
+ * Relevant variables:
  * - GITHUB_REPOSITORY → "owner/repo"
- * - GITHUB_EVENT_PATH → path al JSON del evento (incluye PR number, SHAs, etc.)
- * - GITHUB_TOKEN → token con permisos pull-requests:write
+ * - GITHUB_EVENT_PATH → path to the event JSON (includes PR number, SHAs, etc.)
+ * - GITHUB_TOKEN → token with pull-requests:write permission
  */
 export function getPullRequestContextFromEnv(): PullRequestContext | null {
   const repository = process.env.GITHUB_REPOSITORY;
@@ -32,8 +32,8 @@ export function getPullRequestContextFromEnv(): PullRequestContext | null {
   if (typeof event !== 'object' || event === null) return null;
   const eventObj = event as Record<string, unknown>;
 
-  // El evento pull_request tiene esta estructura.
-  // También soportamos pull_request_target (mismo shape).
+  // The pull_request event has this structure.
+  // pull_request_target is also supported (same shape).
   const pr = eventObj.pull_request as Record<string, unknown> | undefined;
   if (!pr) return null;
 
@@ -52,12 +52,12 @@ export function getPullRequestContextFromEnv(): PullRequestContext | null {
 }
 
 /**
- * Crea un cliente Octokit autenticado con GITHUB_TOKEN.
+ * Creates an Octokit client authenticated with GITHUB_TOKEN.
  */
 export function createOctokit(token = process.env.GITHUB_TOKEN): Octokit {
   if (!token) {
     throw new Error(
-      'GITHUB_TOKEN no está definido. En GitHub Actions, pasalo como env:\n' +
+      'GITHUB_TOKEN is not defined. In GitHub Actions, pass it as an env var:\n' +
         '  env:\n' +
         '    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
     );
@@ -66,8 +66,8 @@ export function createOctokit(token = process.env.GITHUB_TOKEN): Octokit {
 }
 
 /**
- * Obtiene los archivos cambiados en un PR. Usa la API de GitHub que devuelve
- * paginated results con el patch ya generado.
+ * Fetches the changed files in a PR. Uses the GitHub API which returns
+ * paginated results with the patch already generated.
  */
 export async function getPullRequestFiles(
   octokit: Octokit,
@@ -75,7 +75,7 @@ export async function getPullRequestFiles(
 ): Promise<ChangedFile[]> {
   const files: ChangedFile[] = [];
 
-  // La API pagina de a 100 archivos máximo
+  // The API paginates in batches of 100 files maximum
   for await (const response of octokit.paginate.iterator(octokit.pulls.listFiles, {
     owner: ctx.owner,
     repo: ctx.repo,
@@ -110,8 +110,8 @@ function normalizeStatus(status: string): ChangedFile['status'] {
 }
 
 /**
- * Obtiene el contenido completo de un archivo en un SHA específico. Útil para
- * dar más contexto al modelo además del patch.
+ * Fetches the full content of a file at a specific SHA. Useful for giving
+ * the model more context beyond the patch.
  */
 export async function getFileContent(
   octokit: Octokit,
@@ -127,7 +127,7 @@ export async function getFileContent(
       ref,
     });
 
-    if (Array.isArray(response.data)) return null; // es un directorio
+    if (Array.isArray(response.data)) return null; // it's a directory
     if (response.data.type !== 'file') return null;
     if (!('content' in response.data)) return null;
 
@@ -138,12 +138,12 @@ export async function getFileContent(
 }
 
 /**
- * Postea un review en el PR con summary + inline comments.
+ * Posts a review on the PR with a summary and inline comments.
  *
- * - Si `summary` está vacío y no hay findings inline, no postea nada.
- * - Los findings con línea inválida (no presente en el diff) se degradan a
- *   menciones dentro del summary, porque GitHub rechaza inline comments
- *   sobre líneas que no fueron cambiadas.
+ * - If `summary` is empty and there are no inline findings, nothing is posted.
+ * - Findings with an invalid line (not present in the diff) are demoted to
+ *   mentions inside the summary body, because GitHub rejects inline comments
+ *   on lines that were not changed.
  */
 export async function postReview(
   octokit: Octokit,
@@ -159,8 +159,8 @@ export async function postReview(
 ): Promise<void> {
   const { summary, findings, event, inlineComments, maxInlineComments, diffLineMap } = args;
 
-  // Findings que caen sobre líneas del diff → inline comments.
-  // El resto se mergea al final del summary.
+  // Findings that fall on diff lines → inline comments.
+  // The rest are appended to the summary.
   const inline: { path: string; line: number; body: string }[] = [];
   const orphans: ReviewFinding[] = [];
 
@@ -249,9 +249,9 @@ function composeSummary(summary: string, orphans: ReviewFinding[]): string {
 }
 
 /**
- * Parsea un patch unificado y devuelve, por cada archivo, el set de números
- * de línea del lado "nuevo" (RIGHT) que fueron tocados. Solo esas líneas son
- * commentable inline por GitHub.
+ * Parses a unified patch and returns, per file, the set of line numbers on
+ * the "new" side (RIGHT) that were touched. Only those lines are commentable
+ * inline by GitHub.
  */
 export function buildDiffLineMap(files: ChangedFile[]): Map<string, Set<number>> {
   const map = new Map<string, Set<number>>();
@@ -272,7 +272,7 @@ export function buildDiffLineMap(files: ChangedFile[]): Map<string, Set<number>>
         lines.add(currentNewLine);
         currentNewLine++;
       } else if (line.startsWith('-') && !line.startsWith('---')) {
-        // línea eliminada, no avanza el contador del lado nuevo
+        // deleted line — does not advance the new-side counter
       } else if (line.startsWith(' ')) {
         currentNewLine++;
       }

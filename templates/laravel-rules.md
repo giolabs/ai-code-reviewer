@@ -1,33 +1,33 @@
-# Reglas de code review para Laravel / PHP
+# Code review rules for Laravel / PHP
 
-Aplican las reglas genéricas + las siguientes específicas de Laravel.
+The generic rules apply plus the following Laravel-specific ones.
 
-## Eloquent y queries
-- N+1 queries (loops accediendo a relaciones sin `with()`) → major.
-- Mass assignment sin `$fillable`/`$guarded` definido o con `$guarded = []` → major.
-- Queries con interpolación de strings (`whereRaw` con input del usuario) → critical.
-- `Model::all()` sobre tablas grandes → major.
-- Falta de eager loading en respuestas paginadas → minor.
+## Eloquent and queries
+- N+1 queries (loops accessing relations without `with()`) → major.
+- Mass assignment without `$fillable`/`$guarded` defined, or with `$guarded = []` → major.
+- Queries with string interpolation (`whereRaw` with user input) → critical.
+- `Model::all()` on large tables → major.
+- Missing eager loading in paginated responses → minor.
 
-## Requests y validación
-- Controllers que validan inline en vez de usar FormRequest → minor.
-- FormRequests con `authorize` que retorna `true` siempre → minor.
-- Endpoints que aceptan input sin validar → major.
-- Mass assignment desde request directo (`Model::create($request->all())`) sin validación → major.
+## Requests and validation
+- Controllers validating inline instead of using FormRequest → minor.
+- FormRequests with `authorize` always returning `true` → minor.
+- Endpoints accepting unvalidated input → major.
+- Mass assignment directly from the request (`Model::create($request->all())`) without validation → major.
 
-## Seguridad
-- Vistas Blade con `{!! $var !!}` sobre user input → critical (XSS).
-- Rutas sin middleware `auth` cuando deberían tenerlo → major.
-- CSRF deshabilitado en rutas que mutan estado → major.
-- Storage de archivos uploadeados sin validar tipo y tamaño → major.
-- `env()` fuera de archivos de config → minor (no funciona después de cache:config).
+## Security
+- Blade views using `{!! $var !!}` on user input → critical (XSS).
+- Routes missing `auth` middleware when they should have it → major.
+- CSRF disabled on routes that mutate state → major.
+- Uploaded file storage without validating type and size → major.
+- `env()` used outside config files → minor (does not work after `cache:config`).
 
-## Servicios y arquitectura
-- Lógica de negocio en controllers → minor (extraer a services/actions).
-- Múltiples queries en un mismo método sin transacción → bug-risk si son interdependientes.
-- Uso de Facades en código que debería ser inyectable → nitpick.
+## Services and architecture
+- Business logic in controllers → minor (extract to services/actions).
+- Multiple queries in a single method without a transaction → bug-risk if they are interdependent.
+- Using Facades in code that should be injectable → nitpick.
 
-## Jobs y queues
-- Jobs sin `tries`/`backoff` cuando hacen llamadas a APIs externas → minor.
-- Jobs que mutan modelos sin lock cuando hay race conditions posibles → bug-risk.
-- Falta de `ShouldBeUnique` cuando corresponde → minor.
+## Jobs and queues
+- Jobs without `tries`/`backoff` when making external API calls → minor.
+- Jobs mutating models without a lock when race conditions are possible → bug-risk.
+- Missing `ShouldBeUnique` where applicable → minor.

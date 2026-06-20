@@ -1,115 +1,121 @@
 import type { ChangedFile, ReviewerConfig, TechStack } from './types.js';
-import { techDisplayName } from './tech-detect.js';
+import { TechDetector } from './tech-detect.js';
 
-export function buildSystemPrompt(args: {
+interface SystemPromptArgs {
   config: ReviewerConfig;
   tech: TechStack;
   mergedRulesText: string;
-}): string {
-  const { config, tech, mergedRulesText } = args;
-
-  const enabledChecks = Object.entries(config.checks)
-    .filter(([, on]) => on)
-    .map(([k]) => k)
-    .join(', ');
-
-  const langInstruction =
-    config.language === 'es'
-      ? 'Respondé SIEMPRE en español rioplatense, claro y profesional.'
-      : 'Always respond in clear, professional English.';
-
-  const sections = [
-    `Sos un Senior Staff Engineer especializado en code review. Tu objetivo es revisar cambios de código con la rigurosidad de un reviewer experimentado: detectar bugs reales, riesgos de seguridad, problemas de performance, y problemas de mantenibilidad. NO sos un linter — no señales cosas triviales que un linter o formatter resolvería automáticamente.`,
-
-    `**Stack del proyecto:** ${techDisplayName(tech)}`,
-
-    `**Categorías de checks habilitadas:** ${enabledChecks}
-Ignorá categorías deshabilitadas. Si un check está apagado, NO generes findings de esa categoría aunque los veas.`,
-
-    `**Severidad mínima a reportar:** ${config.minSeverity}
-Escala (de mayor a menor): critical > major > minor > info > nitpick.
-- critical: bug que rompe producción, vulnerabilidad explotable, pérdida de datos.
-- major: bug probable, problema de seguridad sin exploit directo, performance issue serio.
-- minor: code smell relevante, edge case mal manejado, falta de error handling.
-- info: observación útil, mejora opcional.
-- nitpick: estilo, naming, micro-optimización.
-NO reportes findings por debajo de la severidad mínima.`,
-
-    `**Reglas de review (merged: proyecto > global):**
-${mergedRulesText || '(sin reglas — aplicá best practices generales)'}`,
-  ];
-
-  if (config.customInstructions) {
-    sections.push(`**Instrucciones adicionales del usuario:**\n${config.customInstructions}`);
-  }
-
-  sections.push(
-    `**Cómo señalar líneas:**
-- El campo \`line\` debe ser el número de línea en el archivo NUEVO (lado derecho del diff).
-- Solo señalá líneas que están en el diff (líneas que empiezan con + en el patch, o contexto inmediato). Las inline comments solo funcionan ahí.
-- Si el problema es sobre el archivo en general (no una línea específica), usá la primera línea cambiada del archivo y aclaralo en la descripción.`,
-
-    `**Calidad sobre cantidad:**
-- Si el PR está bien, decilo explícitamente en el summary y devolvé pocos findings (o cero).
-- No inventes problemas para "llenar" el review.
-- Cada finding debe tener un razonamiento concreto, no vaguedades tipo "podría mejorarse".
-
-${langInstruction}`,
-  );
-
-  return sections.join('\n\n');
 }
 
-/**
- * Construye el user prompt con el contenido a revisar. Trunca diffs gigantes
- * para no explotar el context window.
- */
-export function buildUserPrompt(args: {
-  files: ChangedFile[];
+interface UserPromptArgs {
+  files: ReadonlyArray<ChangedFile>;
   prTitle?: string;
   prBody?: string | null;
   maxTotalChars?: number;
-}): string {
-  const { files, prTitle, prBody, maxTotalChars = 80_000 } = args;
+}
 
-  const parts: string[] = [];
+export class PromptBuilder {
+  buildSystemPrompt(args: SystemPromptArgs): string {
+    const { config, tech, mergedRulesText } = args;
 
-  if (prTitle) {
-    parts.push(`**Título del PR:** ${prTitle}`);
-  }
-  if (prBody) {
-    parts.push(`**Descripción del PR:**\n${prBody}`);
-  }
+    const enabledChecks = Object.entries(config.checks)
+      .filter(([, on]) => on)
+      .map(([k]) => k)
+      .join(', ');
 
-  parts.push(`**Archivos cambiados (${files.length}):**`);
+    const langInstruction =
+      config.language === 'es'
+        ? 'Respondé SIEMPRE en español rioplatense, claro y profesional.'
+        : 'Always respond in clear, professional English.';
 
-  let totalChars = parts.join('\n\n').length;
-  const fileChunks: string[] = [];
+    const sections = [
+      `You are a Senior Staff Engineer specializing in code review. Your goal is to review code changes with the rigor of an experienced reviewer: detect real bugs, security risks, performance issues, and maintainability problems. You are NOT a linter — do not flag trivial things that a linter or formatter would fix automatically.`,
 
-  for (const file of files) {
-    if (!file.patch) {
-      fileChunks.push(`### ${file.path} (${file.status}, sin patch disponible)`);
-      continue;
+      `**Project stack:** ${TechDetector.displayName(tech)}`,
+
+      `**Enabled check categories:** ${enabledChecks}
+Ignore disabled categories. If a check is off, do NOT generate findings for that category even if you spot them.`,
+
+      `**Minimum severity to report:** ${config.minSeverity}
+Scale (highest to lowest): critical > major > minor > info > nitpick.
+- critical: bug that breaks production, exploitable vulnerability, data loss.
+- major: likely bug, security issue without a direct exploit, serious performance problem.
+- minor: relevant code smell, unhandled edge case, missing error handling.
+- info: useful observation, optional improvement.
+- nitpick: style, naming, micro-optimization.
+Do NOT report findings below the minimum severity.`,
+
+      `**Review rules (merged: project > global):**
+${mergedRulesText || '(no rules — apply general best practices)'}`,
+    ];
+
+    if (config.customInstructions) {
+      sections.push(`**Additional user instructions:**\n${config.customInstructions}`);
     }
 
-    const header = `### ${file.path} (${file.status}, +${file.additions}/-${file.deletions})`;
-    const chunk = `${header}\n\`\`\`diff\n${file.patch}\n\`\`\``;
+    sections.push(
+      `**How to reference lines:**
+- The \`line\` field must be the line number in the NEW file (right side of the diff).
+- Only reference lines that are in the diff (lines starting with + in the patch, or immediate context). Inline comments only work there.
+- If the issue is about the file in general (not a specific line), use the first changed line of the file and clarify it in the description.`,
 
-    if (totalChars + chunk.length > maxTotalChars) {
-      fileChunks.push(
-        `### ${file.path} (${file.status})\n_[Diff truncado por exceder el tamaño máximo del prompt.]_`,
-      );
-      totalChars += 120;
-    } else {
-      fileChunks.push(chunk);
-      totalChars += chunk.length;
-    }
+      `**Quality over quantity:**
+- If the PR looks good, say so explicitly in the summary and return few findings (or zero).
+- Do not invent problems to "fill" the review.
+- Every finding must have a concrete rationale, not vague statements like "could be improved".
+
+${langInstruction}`,
+    );
+
+    return sections.join('\n\n');
   }
 
-  parts.push(fileChunks.join('\n\n'));
-  parts.push(
-    `\nRevisá los cambios siguiendo las reglas e instrucciones del system prompt. Devolvé la respuesta en el formato JSON requerido.`,
-  );
+  /**
+   * Builds the user prompt with the content to review. Truncates large diffs
+   * to avoid blowing the context window.
+   */
+  buildUserPrompt(args: UserPromptArgs): string {
+    const { files, prTitle, prBody, maxTotalChars = 80_000 } = args;
 
-  return parts.join('\n\n');
+    const parts: string[] = [];
+
+    if (prTitle) {
+      parts.push(`**PR title:** ${prTitle}`);
+    }
+    if (prBody) {
+      parts.push(`**PR description:**\n${prBody}`);
+    }
+
+    parts.push(`**Changed files (${files.length}):**`);
+
+    let totalChars = parts.join('\n\n').length;
+    const fileChunks: string[] = [];
+
+    for (const file of files) {
+      if (!file.patch) {
+        fileChunks.push(`### ${file.path} (${file.status}, no patch available)`);
+        continue;
+      }
+
+      const header = `### ${file.path} (${file.status}, +${file.additions}/-${file.deletions})`;
+      const chunk = `${header}\n\`\`\`diff\n${file.patch}\n\`\`\``;
+
+      if (totalChars + chunk.length > maxTotalChars) {
+        fileChunks.push(
+          `### ${file.path} (${file.status})\n_[Diff truncated — exceeded the maximum prompt size.]_`,
+        );
+        totalChars += 120;
+      } else {
+        fileChunks.push(chunk);
+        totalChars += chunk.length;
+      }
+    }
+
+    parts.push(fileChunks.join('\n\n'));
+    parts.push(
+      `\nReview the changes following the rules and instructions in the system prompt. Return the response in the required JSON format.`,
+    );
+
+    return parts.join('\n\n');
+  }
 }

@@ -1,33 +1,33 @@
-# Reglas de code review para Flutter / Dart
+# Code review rules for Flutter / Dart
 
-Aplican las reglas genéricas + las siguientes específicas de Flutter.
+The generic rules apply plus the following Flutter-specific ones.
 
-## Widgets y rebuild
-- `setState` llamado fuera del widget al que pertenece → critical.
-- `StatelessWidget` con campos mutables → bug-risk.
-- Trees profundos sin extraer en widgets reutilizables → minor.
-- `BuildContext` capturado y usado después de `await` sin `mounted` check → bug-risk.
-- `MediaQuery.of(context)` o `Theme.of(context)` llamados en loops dentro de build → minor.
+## Widgets and rebuild
+- `setState` called outside the widget it belongs to → critical.
+- `StatelessWidget` with mutable fields → bug-risk.
+- Deep widget trees without extracting reusable widgets → minor.
+- `BuildContext` captured and used after `await` without a `mounted` check → bug-risk.
+- `MediaQuery.of(context)` or `Theme.of(context)` called in loops inside build → minor.
 
-## Estado
-- Provider/Bloc/Riverpod misused (e.g. recrear providers en cada build) → major.
-- StreamControllers/AnimationControllers sin `dispose` → bug-risk.
-- Estado de UI guardado en variables globales sin razón → minor.
+## State
+- Provider/Bloc/Riverpod misused (e.g. recreating providers on every build) → major.
+- `StreamController`s/`AnimationController`s without `dispose` → bug-risk.
+- UI state stored in global variables without justification → minor.
 
 ## Performance
-- `Opacity` sobre subtrees grandes (usar `AnimatedOpacity` o `FadeTransition`) → minor.
-- Imágenes grandes sin `cacheWidth`/`cacheHeight` → minor.
-- ListView sin `itemBuilder` para listas largas → major.
-- `const` faltante en widgets que podrían serlo → nitpick.
+- `Opacity` over large subtrees (use `AnimatedOpacity` or `FadeTransition` instead) → minor.
+- Large images without `cacheWidth`/`cacheHeight` → minor.
+- `ListView` without `itemBuilder` for long lists → major.
+- Missing `const` on widgets that could use it → nitpick.
 
 ## Async
-- `Future` sin awaitar ni retornar (fire-and-forget no intencional) → bug-risk.
-- Llamadas async en `initState` sin manejo de errores ni de unmount → bug-risk.
+- `Future` not awaited or returned (unintentional fire-and-forget) → bug-risk.
+- Async calls in `initState` without error handling or unmount checks → bug-risk.
 
 ## Null safety
-- Uso de `!` (non-null assertion) sin guarantía → bug-risk.
-- Operaciones sobre nullable sin `??` o `?.` → minor.
+- Use of `!` (non-null assertion) without an obvious guarantee → bug-risk.
+- Operations on nullable values without `??` or `?.` → minor.
 
-## Plataforma
-- Uso de APIs específicas de una plataforma sin guard (`Platform.isIOS`) → bug-risk.
-- Assets referenciados sin estar declarados en `pubspec.yaml` → critical.
+## Platform
+- Use of platform-specific APIs without a guard (`Platform.isIOS`) → bug-risk.
+- Assets referenced without being declared in `pubspec.yaml` → critical.

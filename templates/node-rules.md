@@ -1,35 +1,35 @@
-# Reglas de code review para Node.js
+# Code review rules for Node.js
 
-Aplican las reglas genéricas + las siguientes específicas de Node.
+The generic rules apply plus the following Node.js-specific ones.
 
 ## Async / event loop
-- Operaciones sync (`fs.readFileSync`, `crypto` heavy) en handlers de servidor → major.
-- `Promise` sin error handler (`.catch` o try/await) → bug-risk.
+- Sync operations (`fs.readFileSync`, heavy `crypto`) in server request handlers → major.
+- `Promise` without an error handler (`.catch` or try/await) → bug-risk.
 - Unhandled rejections → major.
-- Loops sobre arrays con `await` dentro que podrían paralelizarse con `Promise.all` → minor.
+- Loops over arrays with `await` inside that could be parallelized with `Promise.all` → minor.
 
-## Streams y backpressure
-- Streams sin manejo de `error` event → bug-risk.
-- Pipes sin `pipeline()` cuando hay múltiples streams → minor.
-- Lectura completa a memoria de archivos grandes en vez de stream → major si el tamaño puede ser grande.
+## Streams and backpressure
+- Streams without an `error` event handler → bug-risk.
+- Pipes without `pipeline()` when chaining multiple streams → minor.
+- Reading large files entirely into memory instead of streaming → major if the size can be large.
 
 ## HTTP
-- Falta de timeouts en clientes HTTP → major.
-- Sin límite de payload en endpoints (body parser sin `limit`) → major.
-- Headers sensibles loguados → major.
-- Respuestas que filtran detalles internos (stack traces) a clientes en prod → major.
+- Missing timeouts on HTTP clients → major.
+- No payload limit on endpoints (body parser without `limit`) → major.
+- Sensitive headers logged → major.
+- Responses leaking internal details (stack traces) to clients in production → major.
 
 ## File system / paths
-- `path.join` con segmentos provenientes del usuario sin validar → critical (path traversal).
-- Apertura de archivos sin cerrar (sin `try/finally` o sin `using`) → bug-risk.
-- Permisos de archivos creados muy permisivos (`0777`) → major.
+- `path.join` with user-supplied segments without validation → critical (path traversal).
+- Files opened without being closed (no `try/finally` or `using`) → bug-risk.
+- Files created with overly permissive permissions (`0777`) → major.
 
-## Dependencias
-- `require`/`import` dinámicos con strings de usuario → critical.
-- Uso de paquetes deprecated → minor.
-- Múltiples librerías que hacen lo mismo (e.g. axios + fetch + node-fetch) → nitpick.
+## Dependencies
+- Dynamic `require`/`import` with user-provided strings → critical.
+- Use of deprecated packages → minor.
+- Multiple libraries doing the same thing (e.g. axios + fetch + node-fetch) → nitpick.
 
 ## Process / OS
-- `process.exit()` en código de librería → major.
-- `process.env` accedido directamente sin un módulo de config centralizado → minor.
-- Operaciones que asumen un OS (paths con `/`, separadores) → minor.
+- `process.exit()` in library code → major.
+- `process.env` accessed directly without a centralized config module → minor.
+- Operations that assume a specific OS (paths with `/`, path separators) → minor.

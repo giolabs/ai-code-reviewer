@@ -1,13 +1,14 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import chalk from 'chalk';
-import { loadConfig, filterIgnored } from './config.js';
-import { detectTechStack, techDisplayName } from './tech-detect.js';
-import { buildSystemPrompt, buildUserPrompt } from './prompts.js';
+import { ConfigLoader } from './config.js';
+import { TechDetector } from './tech-detect.js';
+import { PromptBuilder } from './prompts.js';
+import { RulesLoader } from './rules.js';
+import { OutputFormatter } from './output.js';
 import { createLLMAdapter } from './llm/factory.js';
-import { parseReviewJSON } from './llm/json-parser.js';
-import { loadProjectRules, loadGlobalRules, mergeRules } from './rules.js';
+import { ReviewJsonParser } from './llm/json-parser.js';
 import {
   buildDiffLineMap,
   createOctokit,
@@ -15,8 +16,7 @@ import {
   getPullRequestFiles,
   postReview,
 } from './github.js';
-import { filterBySeverity, printReviewToTerminal, reviewToMarkdown } from './output.js';
-import type { ChangedFile, ReviewResult, TechStack } from './types.js';
+import type { ChangedFile, ReviewerConfig, ReviewResult, TechStack } from './types.js';
 import type { LLMConfig } from './llm/types.js';
 
 interface ReviewerCliOptions {
@@ -38,7 +38,8 @@ export interface ReviewPRResult {
 
 function resolveConfig(opts: ReviewerCliOptions) {
   const cwd = process.cwd();
-  const config = loadConfig(opts.configPath, cwd);
+  const configLoader = new ConfigLoader({ cwd });
+  const config = configLoader.loadConfig(opts.configPath);
 
   if (opts.provider) config.provider = opts.provider as typeof config.provider;
   if (opts.model) config.model = opts.model;
@@ -47,18 +48,23 @@ function resolveConfig(opts: ReviewerCliOptions) {
 
   const resolvedModel = config.providerModel ?? config.model;
 
-  const tech = (opts.tech ?? config.tech ?? detectTechStack(cwd)) as TechStack;
+  const tech = (opts.tech ?? config.tech ?? new TechDetector({ cwd }).detect()) as TechStack;
 
+  const rulesLoader = new RulesLoader({ configLoader });
   const rulesPath = opts.rulesPath ?? config.rules;
-  const projectRules = loadProjectRules(rulesPath, cwd);
-  const globalRules = loadGlobalRules(tech);
-  const mergedRulesText = mergeRules(projectRules, globalRules, config.checks);
+  const projectRules = rulesLoader.loadProjectRules({ rulesPath, cwd });
+  const globalRules = rulesLoader.loadGlobalRules(tech);
+  const mergedRulesText = rulesLoader.mergeRules({
+    project: projectRules,
+    global: globalRules,
+    enabledChecks: config.checks,
+  });
 
-  return { config, mergedRulesText, tech, resolvedModel };
+  return { config, configLoader, mergedRulesText, tech, resolvedModel };
 }
 
-function logHeader(tech: string, provider: string, model: string, language: string) {
-  console.log(chalk.dim(`Stack detectado: ${techDisplayName(tech as TechStack)}`));
+function logHeader(tech: string, provider: string, model: string, language: string): void {
+  console.log(chalk.dim(`Stack detectado: ${TechDetector.displayName(tech as TechStack)}`));
   console.log(chalk.dim(`Provider: ${provider} · Modelo: ${model} · Idioma: ${language}`));
   console.log();
 }
@@ -67,11 +73,12 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   const ctx = getPullRequestContextFromEnv();
   if (!ctx) {
     throw new Error(
-      'No se detectó contexto de PR. Este comando está pensado para correr en GitHub Actions sobre un evento pull_request. Para uso local, usá `review-file` o `review-diff`.',
+      'No PR context detected. This command is intended to run in GitHub Actions on a pull_request event. For local use, run `review-file` or `review-diff`.',
     );
   }
 
   const { config, mergedRulesText, tech, resolvedModel } = resolveConfig(opts);
+  const formatter = new OutputFormatter();
 
   console.log(chalk.bold(`Revisando PR #${ctx.pullNumber}: ${ctx.title}`));
   logHeader(tech, config.provider, resolvedModel, config.language);
@@ -79,7 +86,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   const octokit = createOctokit();
   const allFiles = await getPullRequestFiles(octokit, ctx);
 
-  const filteredPaths = filterIgnored(
+  const filteredPaths = ConfigLoader.filterIgnored(
     allFiles.map((f) => f.path),
     config.ignore,
   );
@@ -105,13 +112,13 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     resolvedModel,
   });
 
-  result.findings = filterBySeverity(result.findings, config.minSeverity);
+  result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
 
-  printReviewToTerminal(result);
+  formatter.print(result);
 
   if (opts.save) {
     const { writeFileSync } = await import('node:fs');
-    writeFileSync(resolve(process.cwd(), opts.save), reviewToMarkdown(result), 'utf-8');
+    writeFileSync(resolve(process.cwd(), opts.save), formatter.toMarkdown(result), 'utf-8');
     console.log(chalk.dim(`\nReport guardado en ${opts.save}`));
   }
 
@@ -159,10 +166,11 @@ function extractSummaryForPost(result: ReviewResult): string {
 
 export async function reviewSingleFile(filePath: string, opts: ReviewerCliOptions): Promise<void> {
   const { config, mergedRulesText, tech, resolvedModel } = resolveConfig(opts);
+  const formatter = new OutputFormatter();
 
   const absPath = resolve(process.cwd(), filePath);
   if (!existsSync(absPath)) {
-    throw new Error(`Archivo no encontrado: ${absPath}`);
+    throw new Error(`File not found: ${absPath}`);
   }
   const content = readFileSync(absPath, 'utf-8');
 
@@ -188,12 +196,12 @@ export async function reviewSingleFile(filePath: string, opts: ReviewerCliOption
     resolvedModel,
   });
 
-  result.findings = filterBySeverity(result.findings, config.minSeverity);
-  printReviewToTerminal(result);
+  result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
+  formatter.print(result);
 
   if (opts.save) {
     const { writeFileSync } = await import('node:fs');
-    writeFileSync(resolve(process.cwd(), opts.save), reviewToMarkdown(result), 'utf-8');
+    writeFileSync(resolve(process.cwd(), opts.save), formatter.toMarkdown(result), 'utf-8');
     console.log(chalk.dim(`\nReport guardado en ${opts.save}`));
   }
 }
@@ -202,21 +210,26 @@ export async function reviewLocalDiff(
   opts: ReviewerCliOptions & { staged?: boolean; base?: string },
 ): Promise<void> {
   const { config, mergedRulesText, tech, resolvedModel } = resolveConfig(opts);
+  const formatter = new OutputFormatter();
 
-  const args = opts.staged
+  const diffArgs = opts.staged
     ? ['--cached']
     : opts.base
       ? [`${opts.base}...HEAD`]
       : ['HEAD'];
 
-  console.log(chalk.bold(`Revisando diff local: git diff ${args.join(' ')}`));
+  console.log(chalk.bold(`Revisando diff local: git diff ${diffArgs.join(' ')}`));
   logHeader(tech, config.provider, resolvedModel, config.language);
 
-  const files = parseLocalDiff(
-    execSync(`git diff --no-color ${args.join(' ')}`, { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 }),
-  );
+  // Use execFileSync (not execSync) to avoid shell injection via user-provided refs
+  const rawDiff = execFileSync('git', ['diff', '--no-color', ...diffArgs], {
+    encoding: 'utf-8',
+    maxBuffer: 50 * 1024 * 1024,
+  });
 
-  const filteredPaths = filterIgnored(
+  const files = parseLocalDiff(rawDiff);
+
+  const filteredPaths = ConfigLoader.filterIgnored(
     files.map((f) => f.path),
     config.ignore,
   );
@@ -237,12 +250,12 @@ export async function reviewLocalDiff(
     resolvedModel,
   });
 
-  result.findings = filterBySeverity(result.findings, config.minSeverity);
-  printReviewToTerminal(result);
+  result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
+  formatter.print(result);
 
   if (opts.save) {
     const { writeFileSync } = await import('node:fs');
-    writeFileSync(resolve(process.cwd(), opts.save), reviewToMarkdown(result), 'utf-8');
+    writeFileSync(resolve(process.cwd(), opts.save), formatter.toMarkdown(result), 'utf-8');
     console.log(chalk.dim(`\nReport guardado en ${opts.save}`));
   }
 }
@@ -251,15 +264,16 @@ async function callLLM(args: {
   files: ChangedFile[];
   prTitle?: string;
   prBody?: string | null;
-  config: ReturnType<typeof loadConfig>;
+  config: ReviewerConfig;
   mergedRulesText: string;
   tech: TechStack;
   resolvedModel: string;
 }): Promise<ReviewResult> {
   const { files, prTitle, prBody, config, mergedRulesText, tech, resolvedModel } = args;
 
-  const systemPrompt = buildSystemPrompt({ config, tech, mergedRulesText });
-  const userPrompt = buildUserPrompt({ files, prTitle, prBody });
+  const promptBuilder = new PromptBuilder();
+  const systemPrompt = promptBuilder.buildSystemPrompt({ config, tech, mergedRulesText });
+  const userPrompt = promptBuilder.buildUserPrompt({ files, prTitle, prBody });
 
   const llmConfig: LLMConfig = {
     provider: config.provider,
@@ -275,27 +289,10 @@ async function callLLM(args: {
 
   const response = await adapter.review({ systemPrompt, userPrompt });
 
-  const parsed = config.provider === 'openai'
-    ? JSON.parse(response.content)
-    : parseReviewJSON(response.content);
+  const parser = new ReviewJsonParser();
+  const parsed = parser.parse(response.content);
 
-  return {
-    summary: parsed.summary,
-    overallScore: parsed.overallScore,
-    recommendation: parsed.recommendation,
-    findings: Array.isArray(parsed.findings)
-      ? parsed.findings.map((f: Record<string, unknown>) => ({
-          file: f.file ?? '',
-          line: f.line ?? 0,
-          severity: f.severity ?? 'info',
-          category: f.category ?? 'maintainability',
-          title: f.title ?? '',
-          description: f.description ?? '',
-          suggestion: f.suggestion || undefined,
-        }))
-      : [],
-    tokensUsed: response.tokensUsed,
-  };
+  return { ...parsed, tokensUsed: response.tokensUsed };
 }
 
 function parseLocalDiff(rawDiff: string): ChangedFile[] {

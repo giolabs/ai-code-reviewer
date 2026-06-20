@@ -1,10 +1,10 @@
 /**
- * Niveles de severidad de un finding del review.
+ * Severity levels for a review finding.
  */
 export type Severity = 'critical' | 'major' | 'minor' | 'info' | 'nitpick';
 
 /**
- * Categorías de checks que el reviewer puede ejecutar.
+ * Check categories the reviewer can run.
  */
 export type CheckCategory =
   | 'security'
@@ -17,7 +17,7 @@ export type CheckCategory =
   | 'architecture';
 
 /**
- * Tech stacks soportados con templates de reglas built-in.
+ * Tech stacks with built-in rule templates.
  */
 export type TechStack =
   | 'nestjs'
@@ -32,74 +32,74 @@ export type TechStack =
 export type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'ollama';
 
 /**
- * Configuración cargada desde `.ai-review.yml` o `.ai-review.json`.
+ * Configuration loaded from `.ai-review.yml` or `.ai-review.json`.
  */
 export interface ReviewerConfig {
   /** LLM provider (default: openai) */
   provider: ProviderName;
-  /** Modelo del provider. Alias backward-compatible; providerModel toma precedencia */
+  /** Provider model. Backward-compatible alias; providerModel takes precedence */
   model: string;
-  /** Modelo del provider (toma precedencia sobre model) */
+  /** Provider model (takes precedence over model) */
   providerModel?: string;
-  /** URL de Ollama (solo para provider ollama) */
+  /** Ollama URL (only for ollama provider) */
   ollamaUrl?: string;
-  /** Idioma del review (default: es) */
+  /** Review language (default: es) */
   language: 'es' | 'en';
-  /** Path al archivo de reglas custom (markdown) */
+  /** Path to the custom rules file (markdown) */
   rules?: string;
-  /** Tech stack forzado. Si no se especifica, se auto-detecta */
+  /** Forced tech stack. Auto-detected if not specified. */
   tech?: TechStack;
-  /** Globs/paths a ignorar */
+  /** Globs/paths to ignore */
   ignore: string[];
-  /** Severidad mínima a reportar (default: minor) */
+  /** Minimum severity to report (default: minor) */
   minSeverity: Severity;
-  /** Tamaño máximo de archivo a revisar en bytes (default: 100000) */
+  /** Maximum file size to review in bytes (default: 100000) */
   maxFileSize: number;
-  /** Categorías de checks habilitadas */
+  /** Enabled check categories */
   checks: Record<CheckCategory, boolean>;
-  /** Postear como inline comments en PR (default: true) */
+  /** Post as inline comments on the PR (default: true) */
   inlineComments: boolean;
-  /** Postear un summary general en PR (default: true) */
+  /** Post a general summary on the PR (default: true) */
   summaryComment: boolean;
-  /** Cantidad máxima de inline comments a postear (default: 20) */
+  /** Maximum number of inline comments to post (default: 20) */
   maxInlineComments: number;
-  /** Prompt extra para customizar el review */
+  /** Extra prompt to customize the review */
   customInstructions?: string;
 }
 
 /**
- * Un finding individual del review (un comentario sobre código).
+ * An individual review finding (a comment on the code).
  */
 export interface ReviewFinding {
-  /** Path relativo al archivo */
+  /** Relative path to the file */
   file: string;
-  /** Línea afectada (en el nuevo contenido) */
+  /** Affected line (in the new content) */
   line: number;
-  /** Severidad */
+  /** Severity */
   severity: Severity;
-  /** Categoría */
+  /** Category */
   category: CheckCategory;
-  /** Título corto del issue */
+  /** Short issue title */
   title: string;
-  /** Descripción detallada con contexto y razón */
+  /** Detailed description with context and reasoning */
   description: string;
-  /** Sugerencia de fix (opcional, formato markdown/code block) */
+  /** Fix suggestion (optional, markdown/code block format) */
   suggestion?: string;
 }
 
 /**
- * Resultado completo de un review sobre uno o más archivos.
+ * Complete result of a review over one or more files.
  */
 export interface ReviewResult {
-  /** Resumen ejecutivo en lenguaje natural */
+  /** Executive summary in natural language */
   summary: string;
-  /** Lista de findings */
+  /** List of findings */
   findings: ReviewFinding[];
-  /** Score general del PR de 0 a 10 */
+  /** Overall PR score from 0 to 10 */
   overallScore?: number;
-  /** Recomendación */
+  /** Recommendation */
   recommendation: 'approve' | 'comment' | 'request_changes';
-  /** Tokens usados (para tracking de costo) */
+  /** Tokens used (for cost tracking) */
   tokensUsed?: {
     prompt: number;
     completion: number;
@@ -108,36 +108,36 @@ export interface ReviewResult {
 }
 
 /**
- * Representa un archivo cambiado en un PR/diff.
+ * Represents a changed file in a PR/diff.
  */
 export interface ChangedFile {
-  /** Path relativo */
+  /** Relative path */
   path: string;
-  /** Status del cambio */
+  /** Change status */
   status: 'added' | 'modified' | 'removed' | 'renamed';
-  /** Diff unificado del archivo (con headers @@) */
+  /** Unified diff of the file (with @@ headers) */
   patch?: string;
-  /** Contenido completo del archivo después del cambio (si es razonable cargarlo) */
+  /** Full file content after the change (if reasonable to load) */
   content?: string;
-  /** Líneas agregadas */
+  /** Added lines */
   additions: number;
-  /** Líneas removidas */
+  /** Removed lines */
   deletions: number;
 }
 
 /**
- * Contexto del PR para postear reviews.
+ * PR context for posting reviews.
  */
 export interface PullRequestContext {
   owner: string;
   repo: string;
   pullNumber: number;
-  /** SHA del último commit del PR (para inline comments) */
+  /** SHA of the PR's latest commit (for inline comments) */
   headSha: string;
-  /** SHA del base branch */
+  /** Base branch SHA */
   baseSha: string;
-  /** Título del PR */
+  /** PR title */
   title: string;
-  /** Body del PR */
+  /** PR body */
   body: string | null;
 }

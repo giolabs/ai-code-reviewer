@@ -7,7 +7,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reviewPullRequest, reviewSingleFile, reviewLocalDiff } from './reviewer.js';
 
-// Cargar .env si existe en cwd (para uso local; en Actions las env vars vienen del workflow)
+// Load .env if present in cwd (for local use; in Actions env vars come from the workflow)
 loadEnv();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -116,37 +116,37 @@ function handleError(err: unknown): never {
   process.exit(1);
 }
 
-const EXAMPLE_CONFIG = `# Configuración de ai-code-reviewer
+const EXAMPLE_CONFIG = `# ai-code-reviewer configuration
 # Docs: https://github.com/giolabs/ai-code-reviewer
 
-# LLM Provider. Opciones: openai | anthropic | gemini | ollama
-# La API key se lee de variables de entorno (GitHub Secrets en CI):
+# LLM Provider. Options: openai | anthropic | gemini | ollama
+# The API key is read from environment variables (GitHub Secrets in CI):
 #   - openai:    OPENAI_API_KEY
 #   - anthropic: ANTHROPIC_API_KEY
 #   - gemini:    GEMINI_API_KEY
-#   - ollama:    no requiere API key
+#   - ollama:    no API key required
 provider: openai
 
-# Modelo del provider. Si se omite, se usa el default del provider.
-# Ejemplos por provider:
+# Provider model. If omitted, the provider's default is used.
+# Examples per provider:
 #   - openai:    gpt-4o-mini (default), gpt-4o
 #   - anthropic: claude-sonnet-4-20250514 (default), claude-opus-4-20250514
 #   - gemini:    gemini-1.5-flash (default), gemini-1.5-pro
-#   - ollama:    requiere especificar (ej: codellama, deepseek-coder)
+#   - ollama:    must be specified (e.g. codellama, deepseek-coder)
 model: gpt-4o-mini
 
-# Idioma de los reviews: es | en
+# Review language: es | en
 language: es
 
-# Tech stack. Si se omite, se auto-detecta desde package.json.
-# Opciones: nestjs | react | nextjs | typescript | node | flutter | laravel | generic
+# Tech stack. If omitted, auto-detected from package.json.
+# Options: nestjs | react | nextjs | typescript | node | flutter | laravel | generic
 # tech: nestjs
 
-# Path opcional a archivo markdown con reglas custom del proyecto.
-# Estas reglas se concatenan al system prompt y tienen prioridad sobre las built-in.
+# Optional path to a markdown file with custom project rules.
+# These rules are appended to the system prompt and take priority over built-in rules.
 # rules: ./code-review-rules.md
 
-# Patrones de archivos a ignorar (glob simple)
+# File patterns to ignore (simple glob)
 ignore:
   - node_modules/**
   - dist/**
@@ -157,14 +157,14 @@ ignore:
   - "*.min.js"
   - coverage/**
 
-# Severidad mínima a reportar: critical | major | minor | info | nitpick
+# Minimum severity to report: critical | major | minor | info | nitpick
 minSeverity: minor
 
-# Tamaño máximo de patch por archivo, en bytes. Archivos con diffs gigantes
-# se ignoran (suelen ser autogenerados).
+# Maximum patch size per file, in bytes. Files with very large diffs
+# are ignored (they are usually auto-generated).
 maxFileSize: 100000
 
-# Categorías de checks. Apagá las que no quieras.
+# Check categories. Disable any you don't want.
 checks:
   security: true
   performance: true
@@ -175,19 +175,19 @@ checks:
   bug-risk: true
   architecture: true
 
-# Postear comentarios inline en las líneas afectadas del PR
+# Post inline comments on the affected lines of the PR
 inlineComments: true
 
-# Postear un comentario summary general en el PR
+# Post a general summary comment on the PR
 summaryComment: true
 
-# Cantidad máxima de inline comments. Findings extras se mergean al summary.
+# Maximum number of inline comments. Extra findings are merged into the summary.
 maxInlineComments: 20
 
-# Instrucciones adicionales que se agregan al system prompt.
+# Additional instructions appended to the system prompt.
 # customInstructions: |
-#   Este proyecto sigue Clean Architecture estricta. Cualquier import desde una
-#   capa de dominio hacia infraestructura es un finding 'major'.
+#   This project follows strict Clean Architecture. Any import from a domain
+#   layer into infrastructure is a 'major' finding.
 `;
 
 program.parseAsync(process.argv).catch(handleError);
