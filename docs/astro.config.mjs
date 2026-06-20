@@ -41,6 +41,7 @@ export default defineConfig({
             { label: 'Known Limitations', slug: 'limitations' },
             { label: 'Changelog', slug: 'changelog' },
             { label: 'Troubleshooting', slug: 'troubleshooting' },
+            { label: 'Contributing', slug: 'contributing' },
           ],
         },
       ],

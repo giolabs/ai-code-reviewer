@@ -3,6 +3,19 @@ title: Changelog
 description: Version history for ai-code-reviewer.
 ---
 
+## Unreleased
+
+### Added
+
+- **Branch protection** — `main` requires 1 reviewer approval + CI green; `develop` requires CI green. Direct pushes to both branches are blocked.
+- **CI workflow** (`.github/workflows/ci.yml`) — runs `npm run build && npm test` on every PR targeting `main` or `develop`.
+- **`develop` branch** — new integration branch; all feature/fix/chore work merges here before reaching `main`.
+- **CONTRIBUTING.md** — branching strategy, commit conventions, development setup, and PR checklist.
+- **SECURITY.md** — private vulnerability disclosure via GitHub Advisory; response timeline 48h acknowledge / 14–30d patch.
+- **PR template** and **issue templates** (bug report, feature request) under `.github/`.
+
+---
+
 ## 0.1.0-beta.1 — 2026-06-20
 
 First public beta.
