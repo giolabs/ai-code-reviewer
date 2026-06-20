@@ -1,7 +1,7 @@
 {
   "name": "ai-code-reviewer",
-  "version": "0.1.0",
-  "description": "AI-powered code review for GitHub Pull Requests, configurable per project/tech stack. Powered by OpenAI.",
+  "version": "0.1.0-beta.1",
+  "description": "AI-powered code reviewer for GitHub PRs — supports OpenAI, Anthropic, Gemini and Ollama",
   "type": "module",
   "bin": {
     "ai-code-reviewer": "./dist/cli.js"
@@ -10,6 +10,7 @@
   "files": [
     "dist",
     "templates",
+    "examples",
     "README.md",
     "LICENSE"
   ],
@@ -26,7 +27,10 @@
     "code-review",
     "ai",
     "openai",
-    "gpt",
+    "anthropic",
+    "gemini",
+    "ollama",
+    "multi-provider",
     "github-actions",
     "pull-request",
     "cli",
