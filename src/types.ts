@@ -88,6 +88,18 @@ export interface ReviewFinding {
 }
 
 /**
+ * A predicted regression risk: a caller of the changed code that may break.
+ */
+export interface RegressionRisk {
+  /** Relative path of the caller file */
+  file: string;
+  /** Symbol (function, class, export) in the caller that is at risk */
+  symbol: string;
+  /** Reason why this caller may break */
+  reason: string;
+}
+
+/**
  * Complete result of a review over one or more files.
  */
 export interface ReviewResult {
@@ -99,6 +111,10 @@ export interface ReviewResult {
   overallScore?: number;
   /** Recommendation */
   recommendation: 'approve' | 'comment' | 'request_changes';
+  /** Bugs not yet present but likely to surface given these changes */
+  anticipatedBugs?: ReviewFinding[];
+  /** Callers or consumers of the changed code that may break */
+  regressionRisks?: RegressionRisk[];
   /** Tokens used (for cost tracking) */
   tokensUsed?: {
     prompt: number;

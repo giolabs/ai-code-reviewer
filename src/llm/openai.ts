@@ -53,8 +53,55 @@ const REVIEW_SCHEMA = {
           required: ['file', 'line', 'severity', 'category', 'title', 'description', 'suggestion'],
         },
       },
+      anticipatedBugs: {
+        type: 'array',
+        description: 'Bugs not present yet but likely to surface given these changes.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            file: { type: 'string' },
+            line: { type: 'integer' },
+            severity: {
+              type: 'string',
+              enum: ['critical', 'major', 'minor', 'info', 'nitpick'],
+            },
+            category: {
+              type: 'string',
+              enum: [
+                'security',
+                'performance',
+                'maintainability',
+                'testing',
+                'documentation',
+                'style',
+                'bug-risk',
+                'architecture',
+              ],
+            },
+            title: { type: 'string' },
+            description: { type: 'string' },
+            suggestion: { type: 'string' },
+          },
+          required: ['file', 'line', 'severity', 'category', 'title', 'description', 'suggestion'],
+        },
+      },
+      regressionRisks: {
+        type: 'array',
+        description: 'Callers or consumers of the changed code that may break.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            file: { type: 'string' },
+            symbol: { type: 'string' },
+            reason: { type: 'string' },
+          },
+          required: ['file', 'symbol', 'reason'],
+        },
+      },
     },
-    required: ['summary', 'overallScore', 'recommendation', 'findings'],
+    required: ['summary', 'overallScore', 'recommendation', 'findings', 'anticipatedBugs', 'regressionRisks'],
   },
 } as const;
 

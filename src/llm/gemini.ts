@@ -27,7 +27,13 @@ export class GeminiAdapter extends LLMAdapter {
         temperature: this.config.temperature ?? 0.2,
         responseMimeType: 'application/json',
       },
-      systemInstruction: args.systemPrompt + '\n\nResponde UNICAMENTE con JSON valido.',
+      systemInstruction:
+        args.systemPrompt +
+        '\n\nResponde UNICAMENTE con JSON valido, sin markdown ni texto adicional. ' +
+        'El JSON debe incluir los campos: summary, overallScore, recommendation, findings, anticipatedBugs y regressionRisks. ' +
+        'anticipatedBugs sigue el mismo schema que findings (file, line, severity, category, title, description, suggestion). ' +
+        'regressionRisks es un array de { file: string, symbol: string, reason: string }. ' +
+        'Ambos pueden ser arrays vacios.',
     });
 
     const result = await model.generateContent(args.userPrompt);

@@ -93,6 +93,30 @@ export class OutputFormatter {
       }
     }
 
+    const anticipatedBugs = result.anticipatedBugs ?? [];
+    if (anticipatedBugs.length > 0) {
+      console.log(chalk.bold(`Bugs Anticipados (${anticipatedBugs.length}):`));
+      console.log();
+      for (const f of this.sortFindings(anticipatedBugs)) {
+        const sev = severityColors[f.severity](` ${f.severity.toUpperCase()} `);
+        console.log(`${sev} ${chalk.dim(`[${f.category}]`)} ${chalk.bold(f.title)}`);
+        console.log(`  ${chalk.dim(`${f.file}:${f.line}`)}`);
+        console.log(`  ${f.description}`);
+        console.log();
+      }
+    }
+
+    const regressionRisks = result.regressionRisks ?? [];
+    if (regressionRisks.length > 0) {
+      console.log(chalk.bold(`Riesgos de Regresión (${regressionRisks.length}):`));
+      console.log();
+      for (const r of regressionRisks) {
+        console.log(`${chalk.yellow('⚠')} ${chalk.bold(r.symbol)} en ${chalk.dim(r.file)}`);
+        console.log(`  ${r.reason}`);
+        console.log();
+      }
+    }
+
     if (result.tokensUsed) {
       console.log(
         chalk.dim(
@@ -127,6 +151,35 @@ export class OutputFormatter {
           lines.push('', '**Sugerencia:**', '', f.suggestion);
         }
         lines.push('');
+      }
+    }
+
+    const anticipatedBugs = result.anticipatedBugs ?? [];
+    if (anticipatedBugs.length > 0) {
+      lines.push('## 🐛 Bugs Anticipados', '');
+      for (const f of this.sortFindings(anticipatedBugs)) {
+        lines.push(
+          `### ${severityBadge(f.severity)} ${f.title}`,
+          '',
+          `- **Archivo:** \`${f.file}:${f.line}\``,
+          `- **Categoría:** \`${f.category}\``,
+          '',
+          f.description,
+          '',
+        );
+      }
+    }
+
+    const regressionRisks = result.regressionRisks ?? [];
+    if (regressionRisks.length > 0) {
+      lines.push('## ⚠️ Riesgos de Regresión', '');
+      for (const r of regressionRisks) {
+        lines.push(
+          `### \`${r.symbol}\` en \`${r.file}\``,
+          '',
+          r.reason,
+          '',
+        );
       }
     }
 

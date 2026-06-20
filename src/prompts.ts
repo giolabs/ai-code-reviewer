@@ -5,6 +5,7 @@ interface SystemPromptArgs {
   config: ReviewerConfig;
   tech: TechStack;
   mergedRulesText: string;
+  dependencyIndex?: string;
 }
 
 interface UserPromptArgs {
@@ -48,6 +49,17 @@ Do NOT report findings below the minimum severity.`,
       `**Review rules (merged: project > global):**
 ${mergedRulesText || '(no rules — apply general best practices)'}`,
     ];
+
+    if (args.dependencyIndex) {
+      sections.push(args.dependencyIndex);
+      sections.push(
+        `**How to use the dependency context above:**
+- \`findings\`: issues that already exist in the diff (real bugs, code smells, security issues visible in the changed lines).
+- \`anticipatedBugs\`: bugs that DO NOT exist yet but are likely to be introduced by this change — think about what could go wrong at runtime given the logic change.
+- \`regressionRisks\`: for each caller listed in "Importers" above, reason about whether this change could break that caller. Return one entry per caller at risk. If the caller is safe, omit it.
+Both \`anticipatedBugs\` and \`regressionRisks\` can be empty arrays if the change is safe.`,
+      );
+    }
 
     if (config.customInstructions) {
       sections.push(`**Additional user instructions:**\n${config.customInstructions}`);

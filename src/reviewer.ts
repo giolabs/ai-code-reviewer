@@ -7,6 +7,7 @@ import { TechDetector } from './tech-detect.js';
 import { PromptBuilder } from './prompts.js';
 import { RulesLoader } from './rules.js';
 import { OutputFormatter } from './output.js';
+import { DependencyGraphIndexer } from './dependency-indexer.js';
 import { createLLMAdapter } from './llm/factory.js';
 import { ReviewJsonParser } from './llm/json-parser.js';
 import {
@@ -60,7 +61,7 @@ function resolveConfig(opts: ReviewerCliOptions) {
     enabledChecks: config.checks,
   });
 
-  return { config, configLoader, mergedRulesText, tech, resolvedModel };
+  return { config, configLoader, mergedRulesText, tech, resolvedModel, cwd };
 }
 
 function logHeader(tech: string, provider: string, model: string, language: string): void {
@@ -77,7 +78,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     );
   }
 
-  const { config, mergedRulesText, tech, resolvedModel } = resolveConfig(opts);
+  const { config, mergedRulesText, tech, resolvedModel, cwd } = resolveConfig(opts);
   const formatter = new OutputFormatter();
 
   console.log(chalk.bold(`Revisando PR #${ctx.pullNumber}: ${ctx.title}`));
@@ -102,6 +103,20 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
 
   console.log(chalk.dim(`Archivos a revisar: ${filtered.length} / ${allFiles.length}`));
 
+  console.log(chalk.dim('Analizando grafo de dependencias...'));
+  const indexer = new DependencyGraphIndexer({ cwd, files: filtered, tech });
+  const dependencyIndex = await indexer.build();
+  if (!dependencyIndex) {
+    console.log(chalk.dim('Grafo de dependencias: stack no soportado o madge falló, se omite.'));
+  } else {
+    const edgeCount =
+      (dependencyIndex.match(/→/g) ?? []).length + (dependencyIndex.match(/←/g) ?? []).length;
+    console.log(chalk.dim(`Grafo listo: ${filtered.length} archivos, ${edgeCount} relaciones.`));
+    if (dependencyIndex.endsWith('...(truncated)')) {
+      console.log(chalk.dim('Grafo truncado a 8.000 caracteres.'));
+    }
+  }
+
   const result = await callLLM({
     files: filtered,
     prTitle: ctx.title,
@@ -110,6 +125,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     mergedRulesText,
     tech,
     resolvedModel,
+    dependencyIndex: dependencyIndex ?? undefined,
   });
 
   result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
@@ -161,6 +177,23 @@ function extractSummaryForPost(result: ReviewResult): string {
     parts.push('', `**Score:** ${result.overallScore}/10`);
   }
   parts.push(`**Recomendación del modelo:** \`${result.recommendation}\``);
+
+  const anticipatedBugs = result.anticipatedBugs ?? [];
+  if (anticipatedBugs.length > 0) {
+    parts.push('', '## 🐛 Bugs Anticipados', '');
+    for (const bug of anticipatedBugs) {
+      parts.push(`- **[${bug.severity.toUpperCase()}] ${bug.title}** (\`${bug.file}:${bug.line}\`): ${bug.description}`);
+    }
+  }
+
+  const regressionRisks = result.regressionRisks ?? [];
+  if (regressionRisks.length > 0) {
+    parts.push('', '## ⚠️ Riesgos de Regresión', '');
+    for (const r of regressionRisks) {
+      parts.push(`- **\`${r.symbol}\`** en \`${r.file}\`: ${r.reason}`);
+    }
+  }
+
   return parts.join('\n');
 }
 
@@ -268,11 +301,12 @@ async function callLLM(args: {
   mergedRulesText: string;
   tech: TechStack;
   resolvedModel: string;
+  dependencyIndex?: string;
 }): Promise<ReviewResult> {
-  const { files, prTitle, prBody, config, mergedRulesText, tech, resolvedModel } = args;
+  const { files, prTitle, prBody, config, mergedRulesText, tech, resolvedModel, dependencyIndex } = args;
 
   const promptBuilder = new PromptBuilder();
-  const systemPrompt = promptBuilder.buildSystemPrompt({ config, tech, mergedRulesText });
+  const systemPrompt = promptBuilder.buildSystemPrompt({ config, tech, mergedRulesText, dependencyIndex });
   const userPrompt = promptBuilder.buildUserPrompt({ files, prTitle, prBody });
 
   const llmConfig: LLMConfig = {
