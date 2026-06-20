@@ -8,7 +8,7 @@ description: Complete reference for all ai-code-reviewer commands and flags.
 Main mode: runs inside GitHub Actions on the current PR.
 
 ```bash
-npx ai-code-reviewer review-pr [options]
+npx @giolabs/ai-code-reviewer review-pr [options]
 ```
 
 Detects the PR from `GITHUB_EVENT_PATH`, fetches changed files via the GitHub API, calls the configured LLM, and posts the review with a summary comment and inline comments on the diff.
@@ -54,7 +54,7 @@ On JS/TS stacks, it automatically builds a 1-level dependency graph of the chang
 Reviews a single local file without touching git or a PR. Useful for iterating on rules before committing.
 
 ```bash
-npx ai-code-reviewer review-file src/users/users.service.ts
+npx @giolabs/ai-code-reviewer review-file src/users/users.service.ts
 ```
 
 The file is treated as if it were entirely new (all lines as additions). Output is printed to the terminal.
@@ -69,13 +69,13 @@ Reviews the output of `git diff` locally.
 
 ```bash
 # Working tree vs HEAD
-npx ai-code-reviewer review-diff
+npx @giolabs/ai-code-reviewer review-diff
 
 # Staged changes only
-npx ai-code-reviewer review-diff --staged
+npx @giolabs/ai-code-reviewer review-diff --staged
 
 # Changes since branching from main
-npx ai-code-reviewer review-diff --base main
+npx @giolabs/ai-code-reviewer review-diff --base main
 ```
 
 Useful as a pre-commit hook or a sanity check before pushing. See [Local Usage](./local-usage) for pre-commit hook setup.
@@ -95,7 +95,7 @@ Useful as a pre-commit hook or a sanity check before pushing. See [Local Usage](
 Creates `.ai-review.yml` at the repo root with all defaults documented.
 
 ```bash
-npx ai-code-reviewer init
+npx @giolabs/ai-code-reviewer init
 ```
 
 If `.ai-review.yml` already exists, the command exits without overwriting it.

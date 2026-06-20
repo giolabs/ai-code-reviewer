@@ -25,7 +25,7 @@ OPENAI_API_KEY=sk-...
 ## Review a single file
 
 ```bash
-npx ai-code-reviewer review-file src/users/users.service.ts
+npx @giolabs/ai-code-reviewer review-file src/users/users.service.ts
 ```
 
 Useful when iterating on your rules: make a change to `code-review-rules.md`, re-run `review-file`, see if the finding appears or disappears.
@@ -33,7 +33,7 @@ Useful when iterating on your rules: make a change to `code-review-rules.md`, re
 ## Review staged changes
 
 ```bash
-npx ai-code-reviewer review-diff --staged
+npx @giolabs/ai-code-reviewer review-diff --staged
 ```
 
 Reviews the output of `git diff --cached`. Run this before committing to catch issues early.
@@ -41,7 +41,7 @@ Reviews the output of `git diff --cached`. Run this before committing to catch i
 ## Review against a base branch
 
 ```bash
-npx ai-code-reviewer review-diff --base main
+npx @giolabs/ai-code-reviewer review-diff --base main
 ```
 
 Equivalent to `git diff main...HEAD`. Useful for a full review of a feature branch before opening a PR.
@@ -61,7 +61,7 @@ Then edit `.husky/pre-commit`:
 
 ```bash
 #!/bin/sh
-npx ai-code-reviewer review-diff --staged --min-severity major
+npx @giolabs/ai-code-reviewer review-diff --staged --min-severity major
 ```
 
 This runs the reviewer on staged changes and exits `1` if there are `major` or `critical` findings, blocking the commit.
@@ -72,7 +72,7 @@ Create `.git/hooks/pre-commit` and make it executable:
 
 ```bash
 #!/bin/sh
-npx ai-code-reviewer review-diff --staged --min-severity major
+npx @giolabs/ai-code-reviewer review-diff --staged --min-severity major
 ```
 
 ```bash
@@ -88,5 +88,5 @@ Use `--min-severity major` in pre-commit hooks to avoid blocking commits on `min
 Any command accepts `--save <path>` to write a full Markdown report:
 
 ```bash
-npx ai-code-reviewer review-diff --base main --save review-report.md
+npx @giolabs/ai-code-reviewer review-diff --base main --save review-report.md
 ```

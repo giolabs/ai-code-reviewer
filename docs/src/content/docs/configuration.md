@@ -5,7 +5,7 @@ description: Full reference for .ai-review.yml — all options, defaults, and ex
 
 The `.ai-review.yml` (or `.ai-review.json`) file at the root of your repo controls reviewer behavior. All fields are optional — omit any field to use the default.
 
-Run `npx ai-code-reviewer init` to generate a pre-filled config file.
+Run `npx @giolabs/ai-code-reviewer init` to generate a pre-filled config file.
 
 ## Full reference
 

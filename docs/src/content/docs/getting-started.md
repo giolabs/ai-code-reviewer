@@ -48,7 +48,7 @@ To use a different provider (Anthropic, Gemini, Ollama), see [Providers](./provi
 ## 3. (Optional) Configure project rules
 
 ```bash
-npx ai-code-reviewer init
+npx @giolabs/ai-code-reviewer init
 ```
 
 This creates `.ai-review.yml` at the root of your repo with all defaults documented. Edit to your liking. See [Configuration](./configuration) for the full reference.
@@ -61,7 +61,7 @@ The next PR you open triggers the workflow. The reviewer posts inline comments o
 
 ## What happens on each PR
 
-1. The workflow checks out your repo and runs `npx ai-code-reviewer@latest review-pr`
+1. The workflow checks out your repo and runs `npx @giolabs/ai-code-reviewer@latest review-pr`
 2. The CLI reads `.ai-review.yml` (if present) and detects your tech stack
 3. On JS/TS stacks, it builds a 1-level dependency graph of the changed files
 4. It sends the diffs + context to the configured LLM
