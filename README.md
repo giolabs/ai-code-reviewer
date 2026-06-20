@@ -65,7 +65,7 @@ To use a different provider (Anthropic, Gemini, Ollama), see the [Providers](#pr
 ### 3. (Optional) Configure project rules
 
 ```bash
-npx @giolabs/ai-code-reviewer init
+npx @giolabsuy/ai-code-reviewer init
 ```
 
 This creates `.ai-review.yml` with all defaults documented. Edit to your liking.
@@ -206,7 +206,7 @@ Built-in rules live in [`templates/`](./templates) and can be inspected in the r
 Main mode: runs inside GitHub Actions on the current PR.
 
 ```bash
-npx @giolabs/ai-code-reviewer review-pr [options]
+npx @giolabsuy/ai-code-reviewer review-pr [options]
 ```
 
 Detects the PR from `GITHUB_EVENT_PATH`, fetches changed files via API, calls the configured LLM, and posts the review with summary + inline comments.
@@ -235,7 +235,7 @@ The result includes two additional sections in the PR summary (when non-empty):
 Reviews a local file without touching git or a PR. Useful for iterating on rules.
 
 ```bash
-npx @giolabs/ai-code-reviewer review-file src/users/users.service.ts
+npx @giolabsuy/ai-code-reviewer review-file src/users/users.service.ts
 ```
 
 ### `review-diff`
@@ -244,13 +244,13 @@ Reviews the output of `git diff` locally.
 
 ```bash
 # Working tree vs HEAD
-npx @giolabs/ai-code-reviewer review-diff
+npx @giolabsuy/ai-code-reviewer review-diff
 
 # Staged only
-npx @giolabs/ai-code-reviewer review-diff --staged
+npx @giolabsuy/ai-code-reviewer review-diff --staged
 
 # Against a base branch
-npx @giolabs/ai-code-reviewer review-diff --base main
+npx @giolabsuy/ai-code-reviewer review-diff --base main
 ```
 
 Useful as a pre-commit hook or sanity check before pushing.
@@ -260,7 +260,7 @@ Useful as a pre-commit hook or sanity check before pushing.
 Creates `.ai-review.yml` with all defaults documented.
 
 ```bash
-npx @giolabs/ai-code-reviewer init
+npx @giolabsuy/ai-code-reviewer init
 ```
 
 ---
@@ -283,7 +283,7 @@ OPENAI_API_KEY=sk-...
 `dotenv` loads it automatically. For Ollama no key is needed — just have the service running at `http://localhost:11434` (or the URL you configure in `ollamaUrl`).
 
 ```bash
-npx @giolabs/ai-code-reviewer review-file src/some-file.ts
+npx @giolabsuy/ai-code-reviewer review-file src/some-file.ts
 ```
 
 ---
@@ -329,7 +329,7 @@ To test without publishing:
 npm link
 
 # In the target repo
-npm link @giolabs/ai-code-reviewer
+npm link @giolabsuy/ai-code-reviewer
 ai-code-reviewer review-file src/some-file.ts
 ```
 
