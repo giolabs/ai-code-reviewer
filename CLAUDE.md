@@ -76,36 +76,36 @@ This is an ESM package (`"type": "module"`). All internal imports use `.js` exte
 
 These rules are mandatory and apply to every file written or modified in this project. No exceptions.
 
-### Prohibiciones absolutas
+### Absolute prohibitions
 
-- **Prohibido `any` y `unknown`**: Nunca usar `any` ni `unknown` como tipo de variable, parámetro, retorno o genérico. Si el tipo no se conoce, crear un `Type`, `Interface` o `enum` que lo modele explícitamente. Si viene de una API externa o librería sin tipos, crear un tipo wrapper que describa la estructura esperada.
-- **Prohibido parámetros separados en funciones**: Ninguna función o método puede recibir parámetros posicionales separados. Todos los parámetros se agrupan en un único objeto tipado con una `interface` declarada explícitamente. Excepción: callbacks simples de un solo argumento primitivo (`id: string`, `index: number`) cuando el contexto lo hace inequívoco.
-- **Prohibidas las funciones sueltas**: No declarar `function foo()` ni `const foo = () => {}` en el scope de módulo. Toda lógica vive dentro de una clase. Las únicas excepciones son hooks de React/framework (nombrados con prefijo `use`) y los entry points de CLI (el `main` mínimo que instancia la clase y la llama).
+- **No `any` or `unknown`**: Never use `any` or `unknown` as a variable type, parameter, return type, or generic. If the type is unknown, create a `Type`, `Interface`, or `enum` that models it explicitly. If it comes from an external API or untyped library, create a wrapper type that describes the expected shape.
+- **No separate function parameters**: No function or method may receive separate positional parameters. All parameters are grouped into a single typed object declared with an explicit `interface`. Exception: simple single-primitive-argument callbacks (`id: string`, `index: number`) when the context makes it unambiguous.
+- **No standalone functions**: Do not declare `function foo()` or `const foo = () => {}` at module scope. All logic lives inside a class. The only exceptions are React/framework hooks (named with the `use` prefix) and CLI entry points (the minimal `main` that instantiates the class and calls it).
 
-### Tipado
+### Typing
 
-- **Siempre clases**: Toda unidad de lógica es una clase. Usar `class` en lugar de objetos literales con métodos o módulos de funciones.
-- **`Partial<T>` para validación parcial**: Cuando un método o constructor acepta un subconjunto opcional de propiedades de una interfaz, usar `Partial<T>` o `Partial<T> & Pick<T, 'campo'>` en lugar de repetir propiedades opcionales manualmente.
-- **`Readonly<T>` para datos inmutables**: Propiedades que no se modifican después de la construcción deben declararse `readonly`. Arrays que no se mutan son `ReadonlyArray<T>`.
-- **Tipos de retorno explícitos**: Todo método de clase debe declarar su tipo de retorno explícitamente. No confiar en la inferencia para la firma pública de un método.
-- **Genéricos con restricción**: Nunca `<T>` sin restricción cuando el tipo tiene forma conocida. Usar `<T extends MiInterface>` para acotar el contrato.
-- **Union types sobre booleanos de control**: En lugar de `isActive: boolean`, modelar estados con union: `status: 'active' | 'inactive' | 'pending'`. Cuando el dominio crece, promover a `enum`.
-- **`enum` para conjuntos cerrados de valores**: Valores constantes relacionados que representan un dominio (severidades, estados, categorías) deben ser `enum`, no strings literales dispersos.
-- **`interface` para contratos, `type` para alias y uniones**: Usar `interface` cuando se define la forma de un objeto que puede ser implementado o extendido. Usar `type` para alias de uniones, intersecciones o tipos utilitarios.
-- **Sin type assertions `as X` salvo en test setup o guards**: El cast `as Tipo` enmascara errores. Si se necesita, es señal de que el tipo origen está mal modelado. Refactorizar el origen. Única excepción permitida: guards de tipo narrowing (`as never` en exhaustive checks) y fixtures de test.
+- **Always classes**: Every unit of logic is a class. Use `class` instead of object literals with methods or function modules.
+- **`Partial<T>` for partial validation**: When a method or constructor accepts an optional subset of an interface's properties, use `Partial<T>` or `Partial<T> & Pick<T, 'field'>` instead of repeating optional properties manually.
+- **`Readonly<T>` for immutable data**: Properties that are not modified after construction must be declared `readonly`. Arrays that are not mutated are `ReadonlyArray<T>`.
+- **Explicit return types**: Every class method must explicitly declare its return type. Do not rely on inference for a method's public signature.
+- **Constrained generics**: Never `<T>` without a constraint when the type has a known shape. Use `<T extends MyInterface>` to narrow the contract.
+- **Union types over control booleans**: Instead of `isActive: boolean`, model states with a union: `status: 'active' | 'inactive' | 'pending'`. When the domain grows, promote to `enum`.
+- **`enum` for closed sets of values**: Related constant values that represent a domain (severities, statuses, categories) must be `enum`, not scattered string literals.
+- **`interface` for contracts, `type` for aliases and unions**: Use `interface` when defining the shape of an object that can be implemented or extended. Use `type` for union aliases, intersections, or utility types.
+- **No `as X` type assertions except in test setup or guards**: The `as Type` cast masks errors. If needed, it is a signal that the source type is modelled incorrectly — refactor the source. The only permitted exceptions are narrowing type guards (`as never` in exhaustive checks) and test fixtures.
 
-### Estructura de código
+### Code structure
 
-- **Una clase por archivo**: Cada archivo exporta una sola clase principal. Tipos, interfaces y enums auxiliares de ese archivo pueden coexistir en el mismo archivo.
-- **Inyección de dependencias por constructor**: Las dependencias de una clase se reciben por constructor y se almacenan como `private readonly`. No instanciar dependencias dentro de métodos.
-- **Métodos pequeños y con nombre de intención**: Un método hace una sola cosa. Si supera ~20 líneas, extraer lógica a métodos privados con nombres que describan la intención.
-- **No mutación de parámetros**: Los parámetros recibidos no se modifican. Si se necesita transformar, crear una nueva variable con el resultado.
-- **`async/await` sobre callbacks y `.then()`**: Toda asincronía usa `async/await`. Los errores se manejan con `try/catch` tipado (el `catch (e)` debe castear a un tipo concreto o usar un guard, nunca dejar `e` como `unknown` sin narrowing).
+- **One class per file**: Each file exports a single main class. Auxiliary types, interfaces, and enums for that file may coexist in the same file.
+- **Constructor dependency injection**: A class's dependencies are received via the constructor and stored as `private readonly`. Do not instantiate dependencies inside methods.
+- **Small, intention-named methods**: A method does one thing. If it exceeds ~20 lines, extract logic into private methods with names that describe the intention.
+- **No parameter mutation**: Received parameters are not modified. If transformation is needed, create a new variable with the result.
+- **`async/await` over callbacks and `.then()`**: All asynchrony uses `async/await`. Errors are handled with typed `try/catch` (the `catch (e)` block must cast to a concrete type or use a guard — never leave `e` as `unknown` without narrowing).
 
-### Ejemplo de patrón correcto (tipado)
+### Correct pattern example (typing)
 
 ```typescript
-// ✅ Correcto
+// ✅ Correct
 interface ReviewOptions {
   filePath: string;
   maxTokens: number;
@@ -133,17 +133,17 @@ class FileReviewer {
   }
 }
 
-// ❌ Incorrecto — ninguno de estos patrones está permitido
+// ❌ Incorrect — none of these patterns are allowed
 function reviewFile(path: string, tokens: number, lang?: string): any { }
 const process = (data: unknown) => { };
 class Foo { bar(a: string, b: number, c: boolean) { } }
 ```
 
-## Testing con Vitest
+## Testing with Vitest
 
 ### Setup
 
-Usar **Vitest** como único framework de testing. Configurar en `vitest.config.ts` en la raíz. Instalar con `npm install -D vitest`.
+Use **Vitest** as the sole testing framework. Configure it in `vitest.config.ts` at the root. Install with `npm install -D vitest`.
 
 ```ts
 // vitest.config.ts
@@ -157,31 +157,31 @@ export default defineConfig({
 });
 ```
 
-Agregar script en `package.json`:
+Add scripts to `package.json`:
 ```json
 "test": "vitest run",
 "test:watch": "vitest"
 ```
 
-### Reglas de testing
+### Testing rules
 
-**Patrón AAA obligatorio**: Todo test sigue exactamente tres bloques comentados: `// Arrange`, `// Act`, `// Assert`. Sin excepciones. Si un test no tiene los tres bloques claramente separados, está mal estructurado.
+**Mandatory AAA pattern**: Every test follows exactly three commented blocks: `// Arrange`, `// Act`, `// Assert`. No exceptions. If a test does not have all three blocks clearly separated, it is poorly structured.
 
-**Archivos cortos**: Un archivo de test cubre una sola clase. Si el archivo supera ~100 líneas, está haciendo demasiado — partir por responsabilidad o extraer helpers. Nunca agrupar tests de múltiples clases en un mismo archivo.
+**Short files**: One test file covers one class. If the file exceeds ~100 lines, it is doing too much — split by responsibility or extract helpers. Never group tests for multiple classes in the same file.
 
-**Casos de uso que aporten**: Cada `it()` testea un comportamiento observable del dominio, no un detalle de implementación. El nombre del test completa la frase: *"debe [hacer algo concreto] cuando [condición]"*. Si el nombre no describe un escenario del negocio, el test no aporta.
+**Meaningful test cases**: Each `it()` tests an observable domain behaviour, not an implementation detail. The test name completes the sentence: *"should [do something concrete] when [condition]"*. If the name does not describe a business scenario, the test adds no value.
 
-**Sin complejidad dentro del test**: Cero lógica condicional (`if`, `switch`, loops) dentro de un `it()`. Si se necesita variar inputs, usar `it.each()`. Si el setup es complejo, moverlo a `beforeEach` o a una función factory local del archivo.
+**No complexity inside the test**: Zero conditional logic (`if`, `switch`, loops) inside an `it()`. If inputs need to vary, use `it.each()`. If setup is complex, move it to `beforeEach` or a local factory function in the file.
 
-**Mocks mínimos y explícitos**: Mockear solo lo que cruza un límite real (red, disco, API externa). No mockear clases propias del dominio — instanciarlas directamente. Los mocks se declaran con `vi.fn()` tipados con la interfaz real: `vi.fn<MiInterface['metodo']>()`.
+**Minimal, explicit mocks**: Mock only what crosses a real boundary (network, disk, external API). Do not mock domain classes you own — instantiate them directly. Mocks are declared with `vi.fn()` typed against the real interface: `vi.fn<MyInterface['method']>()`.
 
-**Un assert conceptual por test**: Un `it()` verifica una sola cosa. Múltiples `expect()` están permitidos solo cuando todos verifican facetas del mismo resultado (e.g., un objeto con varios campos). Si cada `expect()` verifica algo diferente, partir en tests separados.
+**One conceptual assertion per test**: An `it()` verifies one thing. Multiple `expect()` calls are allowed only when they all verify facets of the same result (e.g., an object with several fields). If each `expect()` verifies something different, split into separate tests.
 
-**Sin setup global compartido entre describes**: El estado compartido entre tests genera orden-dependencia y tests frágiles. Usar `beforeEach` dentro del `describe` correspondiente, nunca variables mutables en el scope del módulo.
+**No shared global setup across describes**: Shared state between tests creates order-dependence and brittle tests. Use `beforeEach` inside the relevant `describe`, never mutable variables at module scope.
 
-### Estructura de archivos
+### File structure
 
-Los tests **nunca** van junto a los archivos de implementación. Siempre en una carpeta `__test__` en la raíz del proyecto, replicando la estructura de `src/`.
+Tests **never** go alongside implementation files. Always in a `__test__` folder at the project root, mirroring the structure of `src/`.
 
 ```
 src/
@@ -194,7 +194,7 @@ __test__/
   github.test.ts
 ```
 
-Actualizar `vitest.config.ts` para que apunte a esa carpeta:
+Update `vitest.config.ts` to point to that folder:
 
 ```ts
 // vitest.config.ts
@@ -209,14 +209,14 @@ export default defineConfig({
 });
 ```
 
-### Ejemplo de patrón correcto (testing)
+### Correct pattern example (testing)
 
 ```typescript
 // reviewer.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FileReviewer } from './reviewer.js';
 
-// Factory local — oculta el ruido de construcción del objeto
+// Local factory — hides the noise of object construction
 function makeReviewer(overrides: Partial<ReviewerConfig> = {}): FileReviewer {
   const config: ReviewerConfig = { language: 'es', maxTokens: 1000, ...overrides };
   const openaiClient = { call: vi.fn<OpenAIClient['call']>() };
@@ -225,11 +225,11 @@ function makeReviewer(overrides: Partial<ReviewerConfig> = {}): FileReviewer {
 
 describe('FileReviewer', () => {
   describe('review', () => {
-    it('debe retornar findings cuando el modelo detecta problemas', async () => {
+    it('should return findings when the model detects problems', async () => {
       // Arrange
       const reviewer = makeReviewer();
       const expectedFindings: ReviewFinding[] = [
-        { severity: Severity.HIGH, message: 'Variable no tipada', file: 'foo.ts', line: 3 },
+        { severity: Severity.HIGH, message: 'Untyped variable', file: 'foo.ts', line: 3 },
       ];
       vi.mocked(reviewer['openaiClient'].call).mockResolvedValueOnce({
         findings: expectedFindings,
@@ -243,7 +243,7 @@ describe('FileReviewer', () => {
       expect(result.findings).toEqual(expectedFindings);
     });
 
-    it('debe retornar lista vacía cuando no hay problemas', async () => {
+    it('should return an empty list when there are no problems', async () => {
       // Arrange
       const reviewer = makeReviewer();
       vi.mocked(reviewer['openaiClient'].call).mockResolvedValueOnce({
@@ -260,14 +260,14 @@ describe('FileReviewer', () => {
   });
 });
 
-// ❌ Incorrecto — estos patrones no están permitidos
+// ❌ Incorrect — these patterns are not allowed
 it('test 1', () => {
   const r = new FileReviewer(x, y);
-  if (condition) { expect(r.foo()).toBe(1); } // lógica dentro del test
+  if (condition) { expect(r.foo()).toBe(1); } // logic inside the test
 });
 
-it('verifica todo', async () => {
-  expect(result.a).toBe(1);  // assert mezclado — partir en tests separados
+it('verifies everything', async () => {
+  expect(result.a).toBe(1);  // mixed asserts — split into separate tests
   expect(result.b).toBe(2);
   expect(result.c).toBe(3);
 });
