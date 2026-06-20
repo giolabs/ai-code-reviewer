@@ -5,6 +5,31 @@ description: Run the reviewer locally with review-file, review-diff, and as a pr
 
 All three commands work locally without a GitHub repository. You only need an API key for your chosen provider.
 
+## Installation options
+
+**No install needed — run directly with npx:**
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-file src/users/users.service.ts
+```
+
+**Global install — for frequent use from anywhere:**
+
+```bash
+npm install -g @giolabsuy/ai-code-reviewer
+ai-code-reviewer review-diff --staged
+```
+
+**Project devDependency — for pre-commit hooks or team consistency:**
+
+```bash
+npm install --save-dev @giolabsuy/ai-code-reviewer
+```
+
+Then reference it in scripts or hooks as `npx ai-code-reviewer <command>`.
+
+---
+
 ## Setup
 
 Create a `.env` file at the root of the project you want to review:
