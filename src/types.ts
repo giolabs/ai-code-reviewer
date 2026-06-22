@@ -65,6 +65,8 @@ export interface ReviewerConfig {
   maxInlineComments: number;
   /** Extra prompt to customize the review */
   customInstructions?: string;
+  /** Inline comment feedback feature (opt-in) */
+  feedback?: FeedbackConfig;
 }
 
 /**
@@ -139,6 +141,74 @@ export interface ChangedFile {
   additions: number;
   /** Removed lines */
   deletions: number;
+}
+
+// ---------------------------------------------------------------------------
+// Feedback feature types
+// ---------------------------------------------------------------------------
+
+export enum FindingStatus {
+  Open = 'open',
+  Dismissed = 'dismissed',
+  Resolved = 'resolved',
+}
+
+export enum SlashCommand {
+  Explain = 'explain',
+  Dismiss = 'dismiss',
+  Unknown = 'unknown',
+}
+
+export interface FindingMetadata {
+  id: string;
+  file: string;
+  line: number;
+  /** Uses the existing Severity type alias — not promoted to enum */
+  severity: Severity;
+  status: FindingStatus;
+  dismissedBy: string | null;
+  /** REST comment ID of the AI's inline comment */
+  commentId: number;
+  /** GraphQL node ID of the review thread (for resolveReviewThread mutation) */
+  threadNodeId: string;
+}
+
+export interface FeedbackConfig {
+  enabled: boolean;
+  allowDismiss: boolean;
+}
+
+export interface FeedbackEvent {
+  /** GitHub login of the person who replied */
+  actor: string;
+  /** ID of the reply comment (the one containing the slash command) */
+  commentId: number;
+  commentBody: string;
+  /** ID of the parent AI inline comment (from event.comment.in_reply_to_id); null if top-level */
+  inReplyToId: number | null;
+  pullNumber: number;
+  repo: string;
+  owner: string;
+}
+
+export interface ResolveFixedOptions {
+  pullNumber: number;
+  owner: string;
+  repo: string;
+  newFindings: ReadonlyArray<ReviewFinding>;
+  /** Files changed in this push — only threads on these files are checked */
+  changedFiles: ReadonlyArray<string>;
+  commitSha: string;
+  summaryCommentId: number;
+}
+
+export interface ExplainPromptOptions {
+  findingMessage: string;
+  filePath: string;
+  line: number;
+  severity: Severity;
+  codeContext: string;
+  language: 'es' | 'en';
 }
 
 /**
