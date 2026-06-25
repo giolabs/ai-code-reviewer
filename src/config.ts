@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import type { ReviewerConfig, CheckCategory } from './types.js';
+import type { ReviewerConfig, CheckCategory, FeedbackConfig } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -104,11 +104,19 @@ export class ConfigLoader {
       ...(parsed.checks ?? {}),
     };
 
+    const feedback: FeedbackConfig | undefined = parsed.feedback
+      ? {
+          enabled: parsed.feedback.enabled ?? false,
+          allowDismiss: parsed.feedback.allowDismiss ?? true,
+        }
+      : undefined;
+
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
       checks,
       ignore: parsed.ignore ?? DEFAULT_CONFIG.ignore,
+      ...(feedback !== undefined ? { feedback } : {}),
     };
   }
 
