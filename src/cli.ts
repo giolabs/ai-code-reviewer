@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reviewPullRequest, reviewSingleFile, reviewLocalDiff } from './reviewer.js';
+import { handleFeedback } from './handle-feedback.js';
 
 // Load .env if present in cwd (for local use; in Actions env vars come from the workflow)
 loadEnv();
@@ -86,6 +87,19 @@ commonOptions(
     handleError(err);
   }
 });
+
+program
+  .command('handle-feedback')
+  .description(
+    'Procesa una respuesta a un inline comment del AI reviewer (slash commands /explain y /dismiss). Pensado para correr en GitHub Actions sobre evento pull_request_review_comment.',
+  )
+  .action(async () => {
+    try {
+      await handleFeedback();
+    } catch (err) {
+      handleError(err);
+    }
+  });
 
 program
   .command('init')

@@ -11,11 +11,9 @@ import { DependencyGraphIndexer } from './dependency-indexer.js';
 import { createLLMAdapter } from './llm/factory.js';
 import { ReviewJsonParser } from './llm/json-parser.js';
 import {
+  GitHubClient,
   buildDiffLineMap,
-  createOctokit,
   getPullRequestContextFromEnv,
-  getPullRequestFiles,
-  postReview,
 } from './github.js';
 import type { ChangedFile, ReviewerConfig, ReviewResult, TechStack } from './types.js';
 import type { LLMConfig } from './llm/types.js';
@@ -84,8 +82,8 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   console.log(chalk.bold(`Revisando PR #${ctx.pullNumber}: ${ctx.title}`));
   logHeader(tech, config.provider, resolvedModel, config.language);
 
-  const octokit = createOctokit();
-  const allFiles = await getPullRequestFiles(octokit, ctx);
+  const githubClient = new GitHubClient();
+  const allFiles = await githubClient.getPullRequestFiles(ctx);
 
   const filteredPaths = ConfigLoader.filterIgnored(
     allFiles.map((f) => f.path),
@@ -146,7 +144,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   const diffLineMap = buildDiffLineMap(filtered);
   const event = mapRecommendationToEvent(result.recommendation);
 
-  await postReview(octokit, ctx, {
+  await githubClient.postReview(ctx, {
     summary: extractSummaryForPost(result),
     findings: result.findings,
     event,

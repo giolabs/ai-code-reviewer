@@ -1,15 +1,300 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { Octokit } from '@octokit/rest';
-import type { ChangedFile, PullRequestContext, ReviewFinding } from './types.js';
+import { graphql } from '@octokit/graphql';
+import type {
+  ChangedFile,
+  PullRequestContext,
+  ReviewFinding,
+  FindingMetadata,
+  FindingStatus,
+} from './types.js';
+
+// ---------------------------------------------------------------------------
+// GitHubClient
+// ---------------------------------------------------------------------------
+
+interface GitHubClientOptions {
+  token?: string;
+}
+
+interface PostReviewArgs {
+  summary: string;
+  findings: ReviewFinding[];
+  event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE';
+  inlineComments: boolean;
+  maxInlineComments: number;
+  diffLineMap: Map<string, Set<number>>;
+}
+
+interface PostReplyOptions {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  commentId: number;
+  body: string;
+}
+
+interface EditCommentOptions {
+  owner: string;
+  repo: string;
+  commentId: number;
+  body: string;
+  isPrReviewComment: boolean;
+}
+
+interface ResolveThreadOptions {
+  threadNodeId: string;
+}
+
+export class GitHubClient {
+  private readonly octokit: Octokit;
+  private readonly graphqlWithAuth: typeof graphql;
+
+  constructor(options: GitHubClientOptions = {}) {
+    const token = options.token ?? process.env.GITHUB_TOKEN;
+    if (!token) {
+      throw new Error(
+        'GITHUB_TOKEN is not defined. In GitHub Actions, pass it as an env var:\n' +
+          '  env:\n' +
+          '    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
+      );
+    }
+    this.octokit = new Octokit({ auth: token });
+    this.graphqlWithAuth = graphql.defaults({ headers: { authorization: `token ${token}` } });
+  }
+
+  async getPullRequestFiles(ctx: PullRequestContext): Promise<ChangedFile[]> {
+    const files: ChangedFile[] = [];
+
+    for await (const response of this.octokit.paginate.iterator(this.octokit.pulls.listFiles, {
+      owner: ctx.owner,
+      repo: ctx.repo,
+      pull_number: ctx.pullNumber,
+      per_page: 100,
+    })) {
+      for (const file of response.data) {
+        files.push({
+          path: file.filename,
+          status: normalizeStatus(file.status),
+          patch: file.patch,
+          additions: file.additions,
+          deletions: file.deletions,
+        });
+      }
+    }
+
+    return files;
+  }
+
+  async getFileContent(
+    ctx: PullRequestContext,
+    path: string,
+    ref: string,
+  ): Promise<string | null> {
+    try {
+      const response = await this.octokit.repos.getContent({
+        owner: ctx.owner,
+        repo: ctx.repo,
+        path,
+        ref,
+      });
+
+      if (Array.isArray(response.data)) return null;
+      if (response.data.type !== 'file') return null;
+      if (!('content' in response.data)) return null;
+
+      return Buffer.from(response.data.content, 'base64').toString('utf-8');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Posts a review on the PR with a summary and inline comments.
+   * Returns the created review ID (used as the summary comment ID for later edits).
+   */
+  async postReview(ctx: PullRequestContext, args: PostReviewArgs): Promise<number> {
+    const { summary, findings, event, inlineComments, maxInlineComments, diffLineMap } = args;
+
+    const inline: { path: string; line: number; body: string }[] = [];
+    const orphans: ReviewFinding[] = [];
+
+    if (inlineComments) {
+      for (const f of findings) {
+        const fileDiff = diffLineMap.get(f.file);
+        if (fileDiff?.has(f.line) && inline.length < maxInlineComments) {
+          const metadata = buildFindingMetadata(f, 0, '');
+          inline.push({
+            path: f.file,
+            line: f.line,
+            body: formatInlineCommentBody(f, metadata),
+          });
+        } else {
+          orphans.push(f);
+        }
+      }
+    } else {
+      orphans.push(...findings);
+    }
+
+    const finalSummary = composeSummary(summary, orphans);
+
+    const review = await this.octokit.pulls.createReview({
+      owner: ctx.owner,
+      repo: ctx.repo,
+      pull_number: ctx.pullNumber,
+      commit_id: ctx.headSha,
+      event,
+      body: finalSummary,
+      comments: inline.map((c) => ({
+        path: c.path,
+        line: c.line,
+        side: 'RIGHT' as const,
+        body: c.body,
+      })),
+    });
+
+    return review.data.id;
+  }
+
+  async postReply(options: PostReplyOptions): Promise<void> {
+    await this.octokit.pulls.createReplyForReviewComment({
+      owner: options.owner,
+      repo: options.repo,
+      pull_number: options.pullNumber,
+      comment_id: options.commentId,
+      body: options.body,
+    });
+  }
+
+  async editComment(options: EditCommentOptions): Promise<void> {
+    if (options.isPrReviewComment) {
+      await this.octokit.pulls.updateReviewComment({
+        owner: options.owner,
+        repo: options.repo,
+        comment_id: options.commentId,
+        body: options.body,
+      });
+    } else {
+      await this.octokit.issues.updateComment({
+        owner: options.owner,
+        repo: options.repo,
+        comment_id: options.commentId,
+        body: options.body,
+      });
+    }
+  }
+
+  async resolveThread(options: ResolveThreadOptions): Promise<void> {
+    try {
+      await this.graphqlWithAuth(
+        `mutation ResolveThread($threadId: ID!) {
+          resolveReviewThread(input: { threadId: $threadId }) {
+            thread { id isResolved }
+          }
+        }`,
+        { threadId: options.threadNodeId },
+      );
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('422')) return;
+      throw err;
+    }
+  }
+
+  async getPullRequestReviewComments(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<PrReviewComment[]> {
+    const comments: PrReviewComment[] = [];
+
+    for await (const response of this.octokit.paginate.iterator(
+      this.octokit.pulls.listReviewComments,
+      {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: 100,
+      },
+    )) {
+      for (const c of response.data) {
+        comments.push({
+          id: c.id,
+          nodeId: c.node_id,
+          body: c.body,
+          path: c.path,
+          user: c.user?.login ?? '',
+          pullRequestReviewId: c.pull_request_review_id ?? null,
+        });
+      }
+    }
+
+    return comments;
+  }
+
+  async getReviewComment(
+    owner: string,
+    repo: string,
+    commentId: number,
+  ): Promise<PrReviewComment | null> {
+    try {
+      const { data } = await this.octokit.pulls.getReviewComment({
+        owner,
+        repo,
+        comment_id: commentId,
+      });
+      return {
+        id: data.id,
+        nodeId: data.node_id,
+        body: data.body,
+        path: data.path,
+        user: data.user?.login ?? '',
+        pullRequestReviewId: data.pull_request_review_id ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  extractFindingMetadata(commentBody: string): FindingMetadata | null {
+    const match = /<!-- ai-review-finding:([\s\S]*?)-->/.exec(commentBody);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[1].trim()) as FindingMetadata;
+    } catch {
+      return null;
+    }
+  }
+
+  embedFindingMetadata(commentBody: string, metadata: FindingMetadata): string {
+    const tag = `<!-- ai-review-finding:${JSON.stringify(metadata)} -->`;
+    if (/<!-- ai-review-finding:[\s\S]*?-->/.test(commentBody)) {
+      return commentBody.replace(/<!-- ai-review-finding:[\s\S]*?-->/, tag);
+    }
+    return `${commentBody}\n${tag}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Types for internal use
+// ---------------------------------------------------------------------------
+
+export interface PrReviewComment {
+  id: number;
+  nodeId: string;
+  body: string;
+  path: string;
+  user: string;
+  pullRequestReviewId: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Standalone helpers (kept for backward compat and module-level use)
+// ---------------------------------------------------------------------------
 
 /**
  * Reads PR context from the environment variables injected by GitHub Actions.
- * Returns null if not running inside Actions.
- *
- * Relevant variables:
- * - GITHUB_REPOSITORY → "owner/repo"
- * - GITHUB_EVENT_PATH → path to the event JSON (includes PR number, SHAs, etc.)
- * - GITHUB_TOKEN → token with pull-requests:write permission
  */
 export function getPullRequestContextFromEnv(): PullRequestContext | null {
   const repository = process.env.GITHUB_REPOSITORY;
@@ -32,8 +317,6 @@ export function getPullRequestContextFromEnv(): PullRequestContext | null {
   if (typeof event !== 'object' || event === null) return null;
   const eventObj = event as Record<string, unknown>;
 
-  // The pull_request event has this structure.
-  // pull_request_target is also supported (same shape).
   const pr = eventObj.pull_request as Record<string, unknown> | undefined;
   if (!pr) return null;
 
@@ -52,206 +335,55 @@ export function getPullRequestContextFromEnv(): PullRequestContext | null {
 }
 
 /**
- * Creates an Octokit client authenticated with GITHUB_TOKEN.
+ * Reads a pull_request_review_comment event from GITHUB_EVENT_PATH.
  */
-export function createOctokit(token = process.env.GITHUB_TOKEN): Octokit {
-  if (!token) {
-    throw new Error(
-      'GITHUB_TOKEN is not defined. In GitHub Actions, pass it as an env var:\n' +
-        '  env:\n' +
-        '    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
-    );
-  }
-  return new Octokit({ auth: token });
-}
+export function getReviewCommentEventFromEnv(): {
+  actor: string;
+  commentId: number;
+  commentBody: string;
+  inReplyToId: number | null;
+  pullNumber: number;
+  owner: string;
+  repo: string;
+} | null {
+  const repository = process.env.GITHUB_REPOSITORY;
+  const eventPath = process.env.GITHUB_EVENT_PATH;
 
-/**
- * Fetches the changed files in a PR. Uses the GitHub API which returns
- * paginated results with the patch already generated.
- */
-export async function getPullRequestFiles(
-  octokit: Octokit,
-  ctx: PullRequestContext,
-): Promise<ChangedFile[]> {
-  const files: ChangedFile[] = [];
+  if (!repository || !eventPath || !existsSync(eventPath)) return null;
 
-  // The API paginates in batches of 100 files maximum
-  for await (const response of octokit.paginate.iterator(octokit.pulls.listFiles, {
-    owner: ctx.owner,
-    repo: ctx.repo,
-    pull_number: ctx.pullNumber,
-    per_page: 100,
-  })) {
-    for (const file of response.data) {
-      files.push({
-        path: file.filename,
-        status: normalizeStatus(file.status),
-        patch: file.patch,
-        additions: file.additions,
-        deletions: file.deletions,
-      });
-    }
-  }
+  const [owner, repo] = repository.split('/');
+  if (!owner || !repo) return null;
 
-  return files;
-}
-
-function normalizeStatus(status: string): ChangedFile['status'] {
-  switch (status) {
-    case 'added':
-      return 'added';
-    case 'removed':
-      return 'removed';
-    case 'renamed':
-      return 'renamed';
-    default:
-      return 'modified';
-  }
-}
-
-/**
- * Fetches the full content of a file at a specific SHA. Useful for giving
- * the model more context beyond the patch.
- */
-export async function getFileContent(
-  octokit: Octokit,
-  ctx: PullRequestContext,
-  path: string,
-  ref: string,
-): Promise<string | null> {
+  let raw: unknown;
   try {
-    const response = await octokit.repos.getContent({
-      owner: ctx.owner,
-      repo: ctx.repo,
-      path,
-      ref,
-    });
-
-    if (Array.isArray(response.data)) return null; // it's a directory
-    if (response.data.type !== 'file') return null;
-    if (!('content' in response.data)) return null;
-
-    return Buffer.from(response.data.content, 'base64').toString('utf-8');
+    raw = JSON.parse(readFileSync(eventPath, 'utf-8'));
   } catch {
     return null;
   }
-}
 
-/**
- * Posts a review on the PR with a summary and inline comments.
- *
- * - If `summary` is empty and there are no inline findings, nothing is posted.
- * - Findings with an invalid line (not present in the diff) are demoted to
- *   mentions inside the summary body, because GitHub rejects inline comments
- *   on lines that were not changed.
- */
-export async function postReview(
-  octokit: Octokit,
-  ctx: PullRequestContext,
-  args: {
-    summary: string;
-    findings: ReviewFinding[];
-    event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE';
-    inlineComments: boolean;
-    maxInlineComments: number;
-    diffLineMap: Map<string, Set<number>>;
-  },
-): Promise<void> {
-  const { summary, findings, event, inlineComments, maxInlineComments, diffLineMap } = args;
+  if (typeof raw !== 'object' || raw === null) return null;
+  const ev = raw as Record<string, unknown>;
 
-  // Findings that fall on diff lines → inline comments.
-  // The rest are appended to the summary.
-  const inline: { path: string; line: number; body: string }[] = [];
-  const orphans: ReviewFinding[] = [];
+  const comment = ev.comment as Record<string, unknown> | undefined;
+  const pr = ev.pull_request as Record<string, unknown> | undefined;
+  const sender = ev.sender as Record<string, unknown> | undefined;
 
-  if (inlineComments) {
-    for (const f of findings) {
-      const fileDiff = diffLineMap.get(f.file);
-      if (fileDiff?.has(f.line) && inline.length < maxInlineComments) {
-        inline.push({
-          path: f.file,
-          line: f.line,
-          body: formatInlineCommentBody(f),
-        });
-      } else {
-        orphans.push(f);
-      }
-    }
-  } else {
-    orphans.push(...findings);
-  }
+  if (!comment || !pr) return null;
 
-  const finalSummary = composeSummary(summary, orphans);
-
-  await octokit.pulls.createReview({
-    owner: ctx.owner,
-    repo: ctx.repo,
-    pull_number: ctx.pullNumber,
-    commit_id: ctx.headSha,
-    event,
-    body: finalSummary,
-    comments: inline.map((c) => ({
-      path: c.path,
-      line: c.line,
-      side: 'RIGHT',
-      body: c.body,
-    })),
-  });
-}
-
-function severityEmoji(severity: ReviewFinding['severity']): string {
-  switch (severity) {
-    case 'critical':
-      return '🔴';
-    case 'major':
-      return '🟠';
-    case 'minor':
-      return '🟡';
-    case 'info':
-      return '🔵';
-    case 'nitpick':
-      return '⚪';
-  }
-}
-
-function formatInlineCommentBody(f: ReviewFinding): string {
-  const lines = [
-    `${severityEmoji(f.severity)} **${f.severity.toUpperCase()}** · \`${f.category}\` · ${f.title}`,
-    '',
-    f.description,
-  ];
-  if (f.suggestion) {
-    lines.push('', '**Sugerencia:**', '', f.suggestion);
-  }
-  return lines.join('\n');
-}
-
-function composeSummary(summary: string, orphans: ReviewFinding[]): string {
-  const parts = ['## 🤖 AI Code Review', '', summary];
-
-  if (orphans.length > 0) {
-    parts.push(
-      '',
-      '### Observaciones adicionales',
-      '',
-      '_(Estos findings refieren a líneas fuera del diff de este PR o no pudieron mapearse a inline comments.)_',
-      '',
-    );
-    for (const f of orphans) {
-      parts.push(
-        `- ${severityEmoji(f.severity)} **${f.severity.toUpperCase()}** \`${f.file}:${f.line}\` · ${f.category}: **${f.title}** — ${f.description}`,
-      );
-    }
-  }
-
-  parts.push('', '---', '_Generado por [ai-code-reviewer](https://www.npmjs.com/package/ai-code-reviewer)._');
-  return parts.join('\n');
+  return {
+    actor: (sender?.login as string) ?? '',
+    commentId: comment.id as number,
+    commentBody: (comment.body as string) ?? '',
+    inReplyToId: (comment.in_reply_to_id as number | null) ?? null,
+    pullNumber: pr.number as number,
+    owner,
+    repo,
+  };
 }
 
 /**
  * Parses a unified patch and returns, per file, the set of line numbers on
- * the "new" side (RIGHT) that were touched. Only those lines are commentable
- * inline by GitHub.
+ * the new side (RIGHT) that were touched.
  */
 export function buildDiffLineMap(files: ChangedFile[]): Map<string, Set<number>> {
   const map = new Map<string, Set<number>>();
@@ -282,4 +414,97 @@ export function buildDiffLineMap(files: ChangedFile[]): Map<string, Set<number>>
   }
 
   return map;
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+function normalizeStatus(status: string): ChangedFile['status'] {
+  switch (status) {
+    case 'added':
+      return 'added';
+    case 'removed':
+      return 'removed';
+    case 'renamed':
+      return 'renamed';
+    default:
+      return 'modified';
+  }
+}
+
+function severityEmoji(severity: ReviewFinding['severity']): string {
+  switch (severity) {
+    case 'critical':
+      return '🔴';
+    case 'major':
+      return '🟠';
+    case 'minor':
+      return '🟡';
+    case 'info':
+      return '🔵';
+    case 'nitpick':
+      return '⚪';
+  }
+}
+
+export function buildFindingMetadata(
+  f: ReviewFinding,
+  commentId: number,
+  threadNodeId: string,
+): FindingMetadata {
+  const id = createHash('sha1')
+    .update(`${f.file}:${f.line}:${f.title}`)
+    .digest('hex')
+    .slice(0, 12);
+
+  return {
+    id,
+    file: f.file,
+    line: f.line,
+    severity: f.severity,
+    status: 'open' as unknown as FindingStatus,
+    dismissedBy: null,
+    commentId,
+    threadNodeId,
+  };
+}
+
+function formatInlineCommentBody(f: ReviewFinding, metadata: FindingMetadata): string {
+  const lines = [
+    `${severityEmoji(f.severity)} **${f.severity.toUpperCase()}** · \`${f.category}\` · ${f.title}`,
+    '',
+    f.description,
+  ];
+  if (f.suggestion) {
+    lines.push('', '**Sugerencia:**', '', f.suggestion);
+  }
+  lines.push(`\n<!-- ai-review-finding:${JSON.stringify(metadata)} -->`);
+  return lines.join('\n');
+}
+
+function composeSummary(summary: string, orphans: ReviewFinding[]): string {
+  const parts = ['## 🤖 AI Code Review', '', summary];
+
+  if (orphans.length > 0) {
+    parts.push(
+      '',
+      '### Observaciones adicionales',
+      '',
+      '_(Estos findings refieren a líneas fuera del diff de este PR o no pudieron mapearse a inline comments.)_',
+      '',
+    );
+    for (const f of orphans) {
+      parts.push(
+        `- ${severityEmoji(f.severity)} **${f.severity.toUpperCase()}** \`${f.file}:${f.line}\` · ${f.category}: **${f.title}** — ${f.description}`,
+      );
+    }
+  }
+
+  parts.push(
+    '',
+    '---',
+    '_Generado por [ai-code-reviewer](https://www.npmjs.com/package/ai-code-reviewer)._',
+  );
+  return parts.join('\n');
 }
