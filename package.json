@@ -36,6 +36,10 @@
     "cli",
     "static-analysis"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/giolabs/ai-code-reviewer"
+  },
   "author": "Giolabs",
   "license": "MIT",
   "engines": {
