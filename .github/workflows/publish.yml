@@ -17,13 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Debug npm config
-        run: |
-          npm --version
-          cat ~/.npmrc 2>/dev/null || echo "(no ~/.npmrc)"
-          npm config list
-          echo "ACTIONS_ID_TOKEN_REQUEST_URL is set: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: npm ci
@@ -31,7 +25,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish to npm (OIDC Trusted Publisher)
+      - name: Publish to npm
         run: npm publish --provenance --access public --tag beta
         env:
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
