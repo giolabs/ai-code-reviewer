@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: '20'
       - name: Handle inline comment feedback
-        run: npx -y @giolabsuy/ai-code-reviewer@latest handle-feedback
+        run: npx -y @giolabsuy/ai-code-reviewer@beta handle-feedback
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
