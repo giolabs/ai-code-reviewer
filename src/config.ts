@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import type { ReviewerConfig, CheckCategory, FeedbackConfig } from './types.js';
+import type { ReviewerConfig, CheckCategory, FeedbackConfig, AutoApproveConfig } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -111,12 +111,20 @@ export class ConfigLoader {
         }
       : undefined;
 
+    const autoApprove: AutoApproveConfig | undefined = parsed.autoApprove
+      ? {
+          enabled: parsed.autoApprove.enabled ?? false,
+          minScore: parsed.autoApprove.minScore ?? 7,
+        }
+      : undefined;
+
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
       checks,
       ignore: parsed.ignore ?? DEFAULT_CONFIG.ignore,
       ...(feedback !== undefined ? { feedback } : {}),
+      ...(autoApprove !== undefined ? { autoApprove } : {}),
     };
   }
 

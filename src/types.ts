@@ -67,6 +67,8 @@ export interface ReviewerConfig {
   customInstructions?: string;
   /** Inline comment feedback feature (opt-in) */
   feedback?: FeedbackConfig;
+  /** Auto-approve when model recommends approve with no blocking findings (opt-in) */
+  autoApprove?: AutoApproveConfig;
 }
 
 /**
@@ -176,6 +178,12 @@ export interface FindingMetadata {
 export interface FeedbackConfig {
   enabled: boolean;
   allowDismiss: boolean;
+}
+
+export interface AutoApproveConfig {
+  enabled: boolean;
+  /** Minimum overallScore (0–10) required to auto-approve. Ignored when score is absent. */
+  minScore: number;
 }
 
 export interface FeedbackEvent {
