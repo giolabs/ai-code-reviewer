@@ -47,6 +47,20 @@ interface ResolveThreadOptions {
   threadNodeId: string;
 }
 
+interface ListReviewsOptions {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+}
+
+interface DismissReviewOptions {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  reviewId: number;
+  message: string;
+}
+
 export class GitHubClient {
   private readonly octokit: Octokit;
   private readonly graphqlWithAuth: typeof graphql;
@@ -274,6 +288,38 @@ export class GitHubClient {
     }
     return `${commentBody}\n${tag}`;
   }
+
+  async listPullRequestReviews(options: ListReviewsOptions): Promise<ReadonlyArray<PrReview>> {
+    const { owner, repo, pullNumber } = options;
+    const response = await this.octokit.rest.pulls.listReviews({
+      owner,
+      repo,
+      pull_number: pullNumber,
+      per_page: 100,
+    });
+    return response.data.map((r) => ({
+      id: r.id,
+      state: r.state,
+      user: r.user ? { login: r.user.login } : null,
+    }));
+  }
+
+  async dismissReview(options: DismissReviewOptions): Promise<void> {
+    const { owner, repo, pullNumber, reviewId, message } = options;
+    try {
+      await this.octokit.rest.pulls.dismissReview({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        review_id: reviewId,
+        message,
+      });
+    } catch (err) {
+      const httpErr = err as { status?: number };
+      if (httpErr.status === 422) return;
+      throw err;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +333,12 @@ export interface PrReviewComment {
   path: string;
   user: string;
   pullRequestReviewId: number | null;
+}
+
+export interface PrReview {
+  id: number;
+  state: string;
+  user: { login: string } | null;
 }
 
 // ---------------------------------------------------------------------------

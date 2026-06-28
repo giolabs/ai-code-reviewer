@@ -15,7 +15,8 @@ import {
   buildDiffLineMap,
   getPullRequestContextFromEnv,
 } from './github.js';
-import type { ChangedFile, ReviewerConfig, ReviewResult, TechStack } from './types.js';
+import type { PrReview } from './github.js';
+import type { ChangedFile, ReviewerConfig, ReviewResult, TechStack, PullRequestContext } from './types.js';
 import type { LLMConfig } from './llm/types.js';
 
 interface ReviewerCliOptions {
@@ -142,7 +143,26 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   }
 
   const diffLineMap = buildDiffLineMap(filtered);
-  const event = mapRecommendationToEvent(result.recommendation);
+
+  let event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE';
+  if (shouldAutoApprove(result, config)) {
+    console.log(
+      chalk.green(
+        `✓ Auto-aprobando PR #${ctx.pullNumber}: recomendación approve, sin findings bloqueantes.`,
+      ),
+    );
+    await dismissBotReviews(githubClient, ctx);
+    event = 'APPROVE';
+  } else {
+    if (config.autoApprove?.enabled) {
+      console.log(
+        chalk.yellow(
+          `ℹ Auto-approve: condiciones no cumplidas (${buildSkipReason(result, config)}). Posteando como ${mapRecommendationToEvent(result.recommendation)}.`,
+        ),
+      );
+    }
+    event = mapRecommendationToEvent(result.recommendation);
+  }
 
   await githubClient.postReview(ctx, {
     summary: extractSummaryForPost(result),
@@ -167,6 +187,70 @@ function mapRecommendationToEvent(
 ): 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE' {
   if (rec === 'request_changes') return 'REQUEST_CHANGES';
   return 'COMMENT';
+}
+
+export function shouldAutoApprove(result: ReviewResult, config: ReviewerConfig): boolean {
+  const cfg = config.autoApprove;
+  if (!cfg?.enabled) return false;
+  if (result.recommendation !== 'approve') return false;
+  const hasBlocking = result.findings.some(
+    (f) => f.severity === 'critical' || f.severity === 'major',
+  );
+  if (hasBlocking) return false;
+  if (typeof result.overallScore === 'number' && result.overallScore < cfg.minScore) return false;
+  return true;
+}
+
+function buildSkipReason(result: ReviewResult, config: ReviewerConfig): string {
+  if (result.recommendation !== 'approve') return `recommendation=${result.recommendation}`;
+  const hasBlocking = result.findings.some(
+    (f) => f.severity === 'critical' || f.severity === 'major',
+  );
+  if (hasBlocking) return 'hay findings críticos o mayores';
+  const minScore = config.autoApprove?.minScore ?? 7;
+  if (typeof result.overallScore === 'number' && result.overallScore < minScore) {
+    return `score ${result.overallScore} < minScore ${minScore}`;
+  }
+  return 'desconocido';
+}
+
+async function dismissBotReviews(
+  githubClient: GitHubClient,
+  ctx: PullRequestContext,
+): Promise<void> {
+  let reviews: ReadonlyArray<PrReview>;
+  try {
+    reviews = await githubClient.listPullRequestReviews({
+      owner: ctx.owner,
+      repo: ctx.repo,
+      pullNumber: ctx.pullNumber,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(chalk.yellow(`  ⚠ No se pudieron obtener los reviews previos: ${msg}`));
+    return;
+  }
+
+  const botReviews = reviews.filter(
+    (r) => r.state === 'CHANGES_REQUESTED' && r.user?.login === 'github-actions[bot]',
+  );
+
+  for (const review of botReviews) {
+    console.log(chalk.dim(`  Descartando review #${review.id} del bot...`));
+    try {
+      await githubClient.dismissReview({
+        owner: ctx.owner,
+        repo: ctx.repo,
+        pullNumber: ctx.pullNumber,
+        reviewId: review.id,
+        message: 'Findings corregidos — review descartado automáticamente.',
+      });
+      console.log(chalk.dim(`  ✓ Review #${review.id} descartado.`));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(chalk.yellow(`  ⚠ No se pudo descartar review #${review.id}: ${msg}`));
+    }
+  }
 }
 
 function extractSummaryForPost(result: ReviewResult): string {
