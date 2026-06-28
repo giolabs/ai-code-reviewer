@@ -29,3 +29,8 @@ jobs:
         run: npm publish --provenance --access public --tag beta
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Update latest dist-tag
+        run: npm dist-tag add @giolabsuy/ai-code-reviewer@$(node -p "require('./package.json').version") latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
