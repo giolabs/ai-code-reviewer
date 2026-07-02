@@ -1,0 +1,114 @@
+# Tech Stacks
+
+The reviewer detects your project's tech stack automatically from `package.json`, `pubspec.yaml`, `composer.json`, and other marker files. It then loads a built-in rules template optimized for that stack.
+
+## Auto-detection order
+
+Detection is ordered from most specific to most generic so that, for example, a Next.js app gets the Next.js rules and not just the React ones.
+
+| Order | Stack | Detected by |
+|---|---|---|
+| 1 | NestJS | `@nestjs/core` in dependencies |
+| 2 | Next.js | `next` in dependencies |
+| 3 | React | `react` in dependencies |
+| 4 | Flutter | `pubspec.yaml` present |
+| 5 | Laravel | `composer.json` with `laravel/framework` |
+| 6 | Node.js | `package.json` present (no framework match) |
+| 7 | TypeScript | `tsconfig.json` present |
+| 8 | Generic | Fallback |
+
+## Force a stack
+
+Override auto-detection with `tech:` in `.ai-review.yml`:
+
+```yaml
+tech: nestjs
+```
+
+Valid values: `nestjs` | `nextjs` | `react` | `typescript` | `node` | `flutter` | `laravel` | `generic`
+
+## Stack-specific rules
+
+### NestJS (`nestjs`)
+
+- Dependency injection: services, repositories, and providers must be injected via constructor — no direct instantiation inside methods
+- Decorators: guard, interceptor, and pipe usage; `@UseGuards`, `@UseInterceptors`, `@UsePipes` on controllers and methods
+- Module boundaries: imports, exports, and providers declared correctly per module
+- DTOs: input validation with `class-validator`; no raw request body access
+- Exception handling: `HttpException` and built-in exception filters; no raw `throw new Error()`
+- Database: TypeORM repository pattern; avoid direct `EntityManager` calls for complex queries
+- Security: guards on authenticated routes; no `@Public()` on sensitive endpoints
+
+### Next.js (`nextjs`)
+
+- Component model: correct use of Server Components vs Client Components; `use client` only where necessary
+- Data fetching: `fetch` with appropriate caching (`cache: 'no-store'` for dynamic, `revalidate` for ISR)
+- Routing: App Router conventions (layout, page, loading, error files); no mixing Pages Router patterns
+- Image optimization: `next/image` instead of `<img>` tags
+- Link navigation: `next/link` instead of `<a>` for internal routes
+- Environment: `NEXT_PUBLIC_` prefix for client-exposed vars; no secrets in client bundles
+- Performance: avoid large client-side bundles; lazy load heavy components
+
+### React (`react`)
+
+- Hooks: rules of hooks (no conditional or nested calls); dependency arrays complete and accurate
+- State: minimal state; derived values computed, not stored
+- Performance: `useCallback`/`useMemo` when genuinely needed; avoid premature memoization
+- Prop drilling: context or state library for deeply shared state
+- Side effects: `useEffect` cleanup; no async directly in `useEffect`
+- Keys: stable, unique keys in lists; no array index keys for mutable lists
+
+### TypeScript (`typescript`)
+
+- Types: no `any`; explicit return types on exported functions
+- Null safety: explicit `undefined`/`null` handling; use optional chaining and nullish coalescing
+- Generics: constrained generics; no unconstrained `<T>`
+- Enums: `const enum` for closed value sets; union types for open-ended discriminants
+- Assertions: no `as Type` casts except in test fixtures or type guards
+
+### Flutter (`flutter`)
+
+- State management: BLoC/Cubit pattern; no direct `setState` in large widgets
+- Widget separation: UI-only widgets; no business logic in `build()` methods
+- Async: `FutureBuilder`/`StreamBuilder` usage; `async/await` in controllers
+- Navigation: named routes or GoRouter; no direct `MaterialPageRoute` chains
+- Platform: `Platform.isAndroid`/`Platform.isIOS` guards for platform-specific code
+- Performance: `const` constructors; `ListView.builder` for long lists
+
+### Laravel (`laravel`)
+
+- ORM: Eloquent relationships correctly defined; `with()` for eager loading to avoid N+1
+- Validation: `FormRequest` classes; no inline validation in controllers
+- Auth: `auth()->user()` access; policy-based authorization; no raw user ID from request
+- Migrations: reversible `down()` methods; no schema changes in seeder files
+- Routes: RESTful resource controllers; route model binding
+- Security: CSRF on POST/PUT/DELETE; no unparameterized raw SQL queries
+
+### Node.js (`node`)
+
+- Async: `async/await` over callbacks; proper error propagation (`try/catch`)
+- Event loop: no synchronous file/network I/O in hot paths
+- Environment: `process.env` access behind a config module; no `process.env.X` scattered
+- Error handling: unhandled promise rejections; `process.on('unhandledRejection')`
+- Security: `helmet` for HTTP headers; input sanitization; avoid dynamic code execution
+
+### Generic (`generic`)
+
+Applies to any stack. Covers:
+- Security: injection, XSS, hardcoded credentials
+- Performance: algorithmic complexity, unnecessary loops
+- Maintainability: complexity, naming, duplication
+- Bug risk: null safety, off-by-one, race conditions
+- Architecture: separation of concerns, dependency direction
+
+## Combining with custom rules
+
+Built-in template rules are always loaded first. Your `code-review-rules.md` (or `rules:` file in config) is appended after, so your rules win on conflicts.
+
+```yaml
+# .ai-review.yml
+tech: nestjs
+rules: ./team-rules.md
+```
+
+See [Custom Rules](./custom-rules) for examples.

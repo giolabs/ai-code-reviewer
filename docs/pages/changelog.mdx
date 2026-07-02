@@ -1,0 +1,36 @@
+# Changelog
+
+## 0.1.0-beta.4
+
+- **Auto-approve**: new `autoApprove` config block. When the model recommends `approve`, there are no `critical`/`major` findings, and `overallScore` meets `minScore`, the bot posts a real GitHub `APPROVE` event. Opt-in — disabled by default. See [Auto-Approve](./auto-approve).
+- **CI: auto-update `latest` dist-tag** after each beta publish in `publish.yml`.
+- **Fix**: `handle-feedback` workflow now uses `@beta` dist-tag to avoid fetching stale `@latest` during beta cycle.
+
+## 0.1.0-beta.3
+
+- **Inline feedback (`handle-feedback`)**: developers can reply `/explain` to get a detailed explanation of a finding, or `/dismiss` to mark it as resolved. Requires the `handle-feedback` workflow job and `feedback.enabled: true` in config. See [Inline Feedback](./handle-feedback).
+- **Auto-resolve on push**: when new commits are pushed that address a finding, the bot resolves the comment automatically.
+
+## 0.1.0-beta.2
+
+- **Multi-provider**: added support for Anthropic (`claude-*` models) and Gemini (`gemini-*` models). Configure with `provider: anthropic` or `provider: gemini` in `.ai-review.yml`.
+- **Ollama**: added self-hosted provider support. Configure with `provider: ollama` and `model: codellama` (or any pulled model). `ollamaUrl` defaults to `http://localhost:11434`.
+- **Dependency graph** (JS/TS only): the reviewer now imports 1-level dependencies of changed files to detect regression risks.
+- **`init` command**: `npx @giolabsuy/ai-code-reviewer init` generates a pre-filled `.ai-review.yml`.
+
+## 0.1.0-beta.1
+
+Initial beta release.
+
+- `review-pr` command — GitHub Actions integration
+- `review-file` command — local single-file review
+- `review-diff` command — local diff review (`--staged` or `--base`)
+- OpenAI provider with structured output (`json_schema`)
+- Tech stack auto-detection: NestJS, Next.js, React, TypeScript, Node.js, Flutter, Laravel, generic
+- Built-in rules templates per stack
+- Custom rules via `rules:` or `customInstructions:` in config
+- Inline comments on PR diff + summary comment
+- Severity filtering (`minSeverity`)
+- Exit code `1` on `request_changes`
+- `--save <path>` Markdown report export
+- Bilingual output: `language: es | en`

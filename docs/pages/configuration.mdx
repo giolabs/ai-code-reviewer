@@ -1,7 +1,4 @@
----
-title: Configuration
-description: Full reference for .ai-review.yml — all options, defaults, and examples.
----
+# Configuration
 
 The `.ai-review.yml` (or `.ai-review.json`) file at the root of your repo controls reviewer behavior. All fields are optional — omit any field to use the default.
 
@@ -61,6 +58,16 @@ maxInlineComments: 20
 customInstructions: |
   This project follows Clean Architecture. Any import from the domain
   layer into infrastructure is a 'major' finding.
+
+# Inline comment feedback feature (opt-in)
+feedback:
+  enabled: true
+  allowDismiss: true
+
+# Auto-approve when model recommends approve with no blocking findings (opt-in)
+autoApprove:
+  enabled: true
+  minScore: 7
 ```
 
 ## Field reference
@@ -69,8 +76,7 @@ customInstructions: |
 
 Which LLM provider to use. See [Providers](./providers) for setup instructions per provider.
 
-**Default:** `openai`  
-**Options:** `openai` | `anthropic` | `gemini` | `ollama`
+**Default:** `openai` | **Options:** `openai` | `anthropic` | `gemini` | `ollama`
 
 ### `model`
 
@@ -82,38 +88,33 @@ The model name for the selected provider. Any model available on the provider's 
 
 Language the reviewer uses for finding descriptions and the PR summary.
 
-**Default:** `es`  
-**Options:** `es` | `en`
+**Default:** `es` | **Options:** `es` | `en`
 
 ### `tech`
 
-Force a specific tech stack instead of auto-detecting. Useful when detection fails or when you want to apply a specific rule template.
+Force a specific tech stack instead of auto-detecting.
 
-**Default:** auto-detected from `package.json` / `pubspec.yaml` / `composer.json`  
-**Options:** `nestjs` | `nextjs` | `react` | `typescript` | `node` | `flutter` | `laravel` | `generic`
+**Default:** auto-detected | **Options:** `nestjs` | `nextjs` | `react` | `typescript` | `node` | `flutter` | `laravel` | `generic`
 
 ### `rules`
 
-Path to a custom rules Markdown file relative to the repo root. Content is appended to the system prompt after the built-in template. Your rules override built-in ones on conflict.
-
-**Default:** none
+Path to a custom rules Markdown file relative to the repo root. Appended to the system prompt after the built-in template.
 
 ### `ignore`
 
-Array of glob patterns for files to exclude from review. Uses micromatch syntax.
+Array of glob patterns for files to exclude from review.
 
 **Default:** `["node_modules/**", "dist/**", "*.lock", "*.min.js"]`
 
 ### `minSeverity`
 
-Only findings at this severity or higher are included in the output and posted to the PR.
+Only findings at this severity or higher are included in the output.
 
-**Default:** `minor`  
-**Order (highest to lowest):** `critical` → `major` → `minor` → `info` → `nitpick`
+**Default:** `minor` | **Order:** `critical` → `major` → `minor` → `info` → `nitpick`
 
 ### `maxFileSize`
 
-Files with a patch larger than this number of bytes are skipped entirely.
+Files with a patch larger than this number of bytes are skipped.
 
 **Default:** `100000` (100 KB)
 
@@ -128,13 +129,13 @@ Toggle individual check categories on or off.
 | `maintainability` | `true` | Complexity, naming, duplication |
 | `testing` | `true` | Missing tests, bad mocking, vague assertions |
 | `documentation` | `false` | Missing docstrings, comments |
-| `style` | `false` | Formatting, whitespace (defer to your linter) |
+| `style` | `false` | Formatting, whitespace |
 | `bug-risk` | `true` | Null safety, race conditions, off-by-one |
 | `architecture` | `true` | Layer violations, coupling |
 
 ### `inlineComments`
 
-Post findings as inline comments on the PR diff. Findings that don't map to a diff line go to the summary.
+Post findings as inline comments on the PR diff.
 
 **Default:** `true`
 
@@ -152,16 +153,28 @@ The base URL for the Ollama service. Only used when `provider: ollama`.
 
 ### `customInstructions`
 
-Free-form text appended verbatim to the system prompt after all other rules. Use this for project-specific conventions that don't fit in a separate rules file.
+Free-form text appended verbatim to the system prompt after all other rules. Highest priority — wins over built-in templates and `rules` file.
 
-## Extended custom rules
+### `feedback.enabled`
 
-For longer rule sets, keep them in a separate file and reference it:
+Enable the `/explain` and `/dismiss` inline feedback commands. Requires the `handle-feedback` workflow. See [Inline Feedback](./handle-feedback).
 
-```yaml
-rules: ./code-review-rules.md
-```
+**Default:** `false`
 
-That Markdown is appended to the full system prompt. Useful for listing team conventions, required/forbidden patterns, and accepted exceptions.
+### `feedback.allowDismiss`
 
-See [Custom Rules](./custom-rules) for guidance on writing effective rules, and `examples/code-review-rules.md` in the repo for a ready-to-use template.
+Allow developers to use `/dismiss` to mark findings as resolved.
+
+**Default:** `true`
+
+### `autoApprove.enabled`
+
+When the model recommends `approve` and there are no `critical` or `major` findings, the bot posts a real GitHub `APPROVE` event. See [Auto-Approve](./auto-approve).
+
+**Default:** `false`
+
+### `autoApprove.minScore`
+
+Minimum `overallScore` (0–10) required to auto-approve. If the score is below this threshold, the bot falls back to `COMMENT`. Ignored when `overallScore` is absent from the model response.
+
+**Default:** `7`

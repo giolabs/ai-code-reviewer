@@ -1,0 +1,16 @@
+{
+  "getting-started": "Inicio rápido",
+  "local-usage": "Uso local",
+  "providers": "Proveedores",
+  "configuration": "Configuración",
+  "cli-reference": "Referencia CLI",
+  "tech-stacks": "Stacks de tecnología",
+  "custom-rules": "Reglas personalizadas",
+  "handle-feedback": "Feedback en comentarios",
+  "auto-approve": "Auto-aprobación",
+  "design": "Decisiones de diseño",
+  "limitations": "Limitaciones conocidas",
+  "changelog": "Changelog",
+  "troubleshooting": "Resolución de problemas",
+  "contributing": "Contribuir"
+}

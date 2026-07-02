@@ -1,0 +1,135 @@
+# Inline Feedback
+
+The inline feedback feature lets developers reply directly to bot comments on a PR to get more context or dismiss findings they've addressed.
+
+## Commands
+
+| Reply | What happens |
+|---|---|
+| `/explain` | The bot replies with a detailed explanation of the finding: why it matters, what could go wrong, and a concrete fix example |
+| `/dismiss` | The bot marks the comment thread as resolved and acknowledges the dismissal |
+
+Replies must be on a **PR review comment** (inline comment on the diff), not on a regular PR comment.
+
+## Setup
+
+### 1. Enable in config
+
+Add to `.ai-review.yml`:
+
+```yaml
+feedback:
+  enabled: true
+  allowDismiss: true
+```
+
+### 2. Add the workflow job
+
+The `handle-feedback` command must run on the `pull_request_review_comment` event. Add it alongside your existing `ai-review` job:
+
+```yaml
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  ai-review:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch origin ${{ github.base_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  handle-feedback:
+    if: github.event_name == 'pull_request_review_comment'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest handle-feedback
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+```
+
+import { Callout } from 'nextra/components'
+
+<Callout type="info">
+The `GITHUB_ACTOR` variable is required. The handler uses it to avoid responding to its own comments in an infinite loop.
+</Callout>
+
+## How it works
+
+When a developer replies to a bot inline comment:
+
+1. The `pull_request_review_comment` event fires
+2. The `handle-feedback` workflow job starts
+3. The CLI reads the event payload from `GITHUB_EVENT_PATH`
+4. It checks that the reply is to a bot comment (not another developer's comment)
+5. It checks that the reply starts with `/explain` or `/dismiss`
+6. For `/explain`: sends the original finding + the file context to the LLM and posts a detailed reply
+7. For `/dismiss`: resolves the comment thread and posts a brief acknowledgment
+
+## Auto-resolve on push
+
+When new commits are pushed to the PR branch, the reviewer checks if any previously flagged lines have changed. If a finding's line was modified in the new push, the comment thread is resolved automatically and the bot replies confirming the fix was detected.
+
+## Example
+
+```
+Bot: 🔴 critical — Missing authentication guard
+
+       This endpoint has no @UseGuards() decorator. Any unauthenticated
+       user can call it.
+
+Developer (reply): /explain
+
+Bot: The @UseGuards() decorator connects a NestJS guard to this endpoint.
+     Without it, the endpoint is publicly accessible regardless of any
+     global guards set in main.ts.
+
+     Fix: add @UseGuards(JwtAuthGuard) to the controller method:
+
+       @Get('profile')
+       @UseGuards(JwtAuthGuard)
+       getProfile(@Request() req) { ... }
+
+     If this endpoint is intentionally public, use @Public() from your
+     auth module and document why.
+```
+
+## Disabling dismiss
+
+To keep findings visible even after developer acknowledgment (useful for audit purposes), set:
+
+```yaml
+feedback:
+  enabled: true
+  allowDismiss: false
+```
+
+With this setting, `/explain` still works but `/dismiss` is ignored and the bot replies explaining that dismissal is disabled.

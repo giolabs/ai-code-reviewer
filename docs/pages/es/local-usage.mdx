@@ -1,0 +1,116 @@
+# Uso local
+
+Los tres comandos funcionan localmente sin necesidad de un repositorio de GitHub. Solo necesitás una API key del proveedor que elijas.
+
+## Opciones de instalación
+
+**Sin instalación — ejecutar directamente con npx:**
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-file src/users/users.service.ts
+```
+
+**Instalación global — para uso frecuente desde cualquier parte:**
+
+```bash
+npm install -g @giolabsuy/ai-code-reviewer
+ai-code-reviewer review-diff --staged
+```
+
+**Dependencia de desarrollo — para hooks de pre-commit o consistencia de equipo:**
+
+```bash
+npm install --save-dev @giolabsuy/ai-code-reviewer
+```
+
+Después referencíalo en scripts o hooks como `npx ai-code-reviewer <comando>`.
+
+---
+
+## Configuración
+
+Creá un archivo `.env` en la raíz del proyecto que querés revisar:
+
+```bash
+# OpenAI (por defecto)
+OPENAI_API_KEY=sk-...
+
+# Anthropic
+# ANTHROPIC_API_KEY=sk-ant-...
+
+# Gemini
+# GEMINI_API_KEY=AI...
+```
+
+`dotenv` se carga automáticamente. Para Ollama, no hace falta key — solo tené el servicio corriendo en `http://localhost:11434`.
+
+## Revisar un archivo individual
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-file src/users/users.service.ts
+```
+
+Útil cuando estás iterando sobre tus reglas: modificá `code-review-rules.md`, volvé a ejecutar `review-file`, fijate si el hallazgo aparece o desaparece.
+
+## Revisar cambios en stage
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-diff --staged
+```
+
+Revisa el output de `git diff --cached`. Ejecutalo antes de commitear para detectar problemas temprano.
+
+## Revisar contra una rama base
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-diff --base main
+```
+
+Equivale a `git diff main...HEAD`. Útil para una revisión completa de una rama de feature antes de abrir un PR.
+
+## Hook de pre-commit
+
+Conectá `review-diff --staged` como hook de pre-commit para obtener feedback inline antes de cada commit.
+
+### Con Husky
+
+```bash
+npm install --save-dev husky
+npx husky init
+```
+
+Después editá `.husky/pre-commit`:
+
+```bash
+#!/bin/sh
+npx @giolabsuy/ai-code-reviewer review-diff --staged --min-severity major
+```
+
+Esto ejecuta el revisor sobre los cambios en stage y termina con `1` si hay hallazgos `major` o `critical`, bloqueando el commit.
+
+### Sin Husky (hook git directo)
+
+Creá `.git/hooks/pre-commit` y hacélo ejecutable:
+
+```bash
+#!/bin/sh
+npx @giolabsuy/ai-code-reviewer review-diff --staged --min-severity major
+```
+
+```bash
+chmod +x .git/hooks/pre-commit
+```
+
+import { Callout } from 'nextra/components'
+
+<Callout type="tip">
+Usá `--min-severity major` en hooks de pre-commit para no bloquear commits por hallazgos `minor`/`nitpick`. Guardá esos para la revisión completa del PR.
+</Callout>
+
+## Guardar un reporte en Markdown
+
+Cualquier comando acepta `--save <ruta>` para escribir un reporte completo en Markdown:
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-diff --base main --save reporte-revision.md
+```

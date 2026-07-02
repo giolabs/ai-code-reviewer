@@ -1,0 +1,133 @@
+# CLI Reference
+
+All commands are available via `npx @giolabsuy/ai-code-reviewer` or via the global binary `ai-code-reviewer`.
+
+## review-pr
+
+Reviews a GitHub pull request. Must run inside a GitHub Actions environment.
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-pr [options]
+```
+
+| Option | Description |
+|---|---|
+| `--dry-run` | Print what would be posted without writing to GitHub |
+| `--min-severity <level>` | Override `minSeverity` from config |
+| `--save <path>` | Save a Markdown report to file |
+| `--config <path>` | Path to config file (default: `.ai-review.yml`) |
+
+**Required environment variables:**
+
+| Variable | Description |
+|---|---|
+| `OPENAI_API_KEY` | (or `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) |
+| `GITHUB_TOKEN` | Provided automatically by GitHub Actions |
+| `GITHUB_REPOSITORY` | Provided automatically by GitHub Actions |
+| `GITHUB_EVENT_PATH` | Provided automatically by GitHub Actions |
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| `0` | Review completed, no `request_changes` recommendation |
+| `1` | Review posted with `request_changes`, or error |
+
+## review-file
+
+Reviews a single file.
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-file <path> [options]
+```
+
+| Option | Description |
+|---|---|
+| `--min-severity <level>` | Filter findings by severity |
+| `--save <path>` | Save a Markdown report to file |
+| `--config <path>` | Path to config file |
+
+**Example:**
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-file src/users/users.service.ts
+```
+
+## review-diff
+
+Reviews a local git diff.
+
+```bash
+npx @giolabsuy/ai-code-reviewer review-diff [options]
+```
+
+Exactly one of `--staged` or `--base` is required.
+
+| Option | Description |
+|---|---|
+| `--staged` | Review `git diff --cached` (staged changes) |
+| `--base <branch>` | Review `git diff <branch>...HEAD` |
+| `--min-severity <level>` | Filter findings by severity |
+| `--save <path>` | Save a Markdown report to file |
+| `--config <path>` | Path to config file |
+
+**Examples:**
+
+```bash
+# Review staged changes before committing
+npx @giolabsuy/ai-code-reviewer review-diff --staged
+
+# Review full feature branch against main
+npx @giolabsuy/ai-code-reviewer review-diff --base main
+
+# Review staged and only show major/critical
+npx @giolabsuy/ai-code-reviewer review-diff --staged --min-severity major
+```
+
+## handle-feedback
+
+Handles developer replies to inline bot comments (`/explain`, `/dismiss`). Must run inside a GitHub Actions environment triggered by `pull_request_review_comment`.
+
+```bash
+npx @giolabsuy/ai-code-reviewer handle-feedback [options]
+```
+
+| Option | Description |
+|---|---|
+| `--config <path>` | Path to config file |
+
+**Required environment variables:**
+
+| Variable | Description |
+|---|---|
+| `OPENAI_API_KEY` | (or `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) |
+| `GITHUB_TOKEN` | Provided automatically by GitHub Actions |
+| `GITHUB_REPOSITORY` | Provided automatically by GitHub Actions |
+| `GITHUB_EVENT_PATH` | Provided automatically by GitHub Actions |
+| `GITHUB_ACTOR` | Provided automatically by GitHub Actions |
+
+See [Inline Feedback](./handle-feedback) for the full workflow.
+
+## init
+
+Creates a `.ai-review.yml` config file with all options documented.
+
+```bash
+npx @giolabsuy/ai-code-reviewer init
+```
+
+Writes `.ai-review.yml` to the current directory. Safe to run in any repo — it won't overwrite an existing file.
+
+## Severity levels
+
+From highest to lowest:
+
+| Level | When used |
+|---|---|
+| `critical` | Security vulnerabilities, data loss risks |
+| `major` | Bugs, broken logic, serious performance issues |
+| `minor` | Code quality, potential improvements |
+| `info` | Informational, best practices |
+| `nitpick` | Style preferences, cosmetic |
+
+The `--min-severity` flag filters out everything below the specified level. For example, `--min-severity major` shows only `major` and `critical` findings.

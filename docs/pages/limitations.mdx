@@ -1,0 +1,65 @@
+# Limitations
+
+Known constraints and behaviors to be aware of before relying on the reviewer in production.
+
+## LLM limitations
+
+### False positives and false negatives
+
+The reviewer uses a language model. It will sometimes flag code that is correct (false positives) and miss bugs that exist (false negatives). Treat findings as signals to investigate, not verdicts.
+
+### Hallucinated line numbers
+
+The model may cite a line number that doesn't exactly match the diff. Always read the finding description and look at the surrounding code, not just the cited line.
+
+### Context window limits
+
+Each file diff is truncated at 80,000 characters. Very large files or PRs with many changed files may have some diffs truncated. The reviewer logs which files were truncated.
+
+### No execution
+
+The reviewer reads code statically. It cannot run tests, execute the binary, or reproduce bugs at runtime. Dynamic issues (race conditions, memory leaks, behavior under real load) are harder for it to catch.
+
+## GitHub limitations
+
+### Only diff-visible lines get inline comments
+
+GitHub's API only allows inline comments on lines that appear in the PR diff. Findings on unchanged context lines or files not in the diff are moved to the summary comment.
+
+### Rate limits
+
+For PRs with many files, the reviewer makes multiple API calls to fetch file contents. If the GitHub API rate limit is hit, the review is retried after a backoff. In extreme cases (very large PRs), it may fail.
+
+### Draft PRs are skipped
+
+The recommended workflow skips draft PRs (`github.event.pull_request.draft == false`). This is intentional — draft PRs are works in progress.
+
+## Supported contexts
+
+### `review-pr` requires GitHub Actions
+
+The `review-pr` command reads PR context from `GITHUB_EVENT_PATH` and `GITHUB_REPOSITORY` environment variables set by GitHub Actions. It cannot run outside a GitHub Actions environment.
+
+### `handle-feedback` requires Actions + `pull_request_review_comment` trigger
+
+The `handle-feedback` command requires the workflow to be triggered by `pull_request_review_comment`. See [Inline Feedback](./handle-feedback).
+
+### Dependency graph is JS/TS only
+
+The one-level dependency graph (importing caller/callee context) only works for JavaScript and TypeScript stacks. Other stacks send only the changed file diffs.
+
+## Configuration limitations
+
+### `tech:` override is per-repo, not per-directory
+
+The tech stack detection applies to the whole repo. Monorepos with multiple stacks get the rules of whichever stack is detected (or forced via `tech:`).
+
+### `rules:` file is a single file
+
+The `rules:` field accepts one Markdown file. If you need rules from multiple sources, concatenate them into one file, or use `customInstructions:` for short additions.
+
+## Cost
+
+Each PR review is one LLM API call. Cost depends on the provider, the model, and the size of the diff. With `gpt-4o-mini` at OpenAI pricing, a typical PR with 5–10 changed files costs less than $0.01. Larger PRs with many changed files cost proportionally more.
+
+To limit cost, configure `maxFileSize` to skip large generated or minified files, and use `ignore:` patterns to exclude non-production code.

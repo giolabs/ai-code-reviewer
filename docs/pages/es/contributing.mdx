@@ -1,0 +1,93 @@
+# Contribuir
+
+## Configuración de desarrollo
+
+```bash
+git clone https://github.com/giolabs/ai-code-reviewer.git
+cd ai-code-reviewer
+npm install
+```
+
+Copiá el archivo de entorno de ejemplo y agregá tu API key:
+
+```bash
+cp .env.example .env
+# editá .env y agregá OPENAI_API_KEY=sk-...
+```
+
+Ejecutá comandos directamente desde el código fuente (sin necesidad de compilar):
+
+```bash
+npm run dev -- review-file src/cli.ts
+npm run dev -- review-diff --staged
+```
+
+## Build
+
+```bash
+npm run build    # tsc → dist/
+npm run clean    # rm -rf dist
+```
+
+## Tests
+
+```bash
+npm test              # vitest run (pasada única)
+npm run test:watch    # modo watch de vitest
+```
+
+Los tests están en `__test__/`, espejando la estructura de `src/`. Ver la página de [Diseño](./design) para contexto de arquitectura.
+
+## Convenciones de código
+
+Todo el código está en **inglés** sin excepción: nombres de clases, métodos, variables, interfaces, archivos. El único contenido en español es el output de CLI orientado al usuario y el README.
+
+Reglas clave de TypeScript que se aplican en este proyecto:
+
+- Sin `any` o `unknown` como tipos — modelar la forma explícitamente
+- Sin funciones standalone en el módulo — toda la lógica vive en una clase
+- Sin parámetros posicionales separados — todos los params agrupados en una interface tipada
+- Tipos de retorno explícitos en todos los métodos de clase
+- `async/await` sobre cadenas `.then()`
+
+Ver `CLAUDE.md` en la raíz del repo para los estándares completos de TypeScript.
+
+## Agregar un proveedor
+
+Los proveedores se implementan en `src/openai.ts` (a pesar del nombre, maneja todos los proveedores). Para agregar uno nuevo:
+
+1. Agregar el nombre del proveedor al union type `Provider` en `src/types.ts`
+2. Agregar un case al switch de proveedores en `src/openai.ts`
+3. Agregar el nombre de la env var de la API key a `PROVIDER_ENV_VAR_MAP`
+4. Agregar una fila a la página de docs de [Proveedores](./providers)
+5. Agregar cobertura de test en `__test__/openai.test.ts`
+
+## Agregar un template de stack tecnológico
+
+Los templates son archivos Markdown en `templates/`. Para agregar un nuevo stack:
+
+1. Crear `templates/<stack>-rules.md` con reglas de revisión para el stack
+2. Agregar el stack al enum `TechStack` en `src/types.ts`
+3. Agregar lógica de detección a `src/tech-detect.ts` (antes del fallback genérico)
+4. Agregar el valor de config a la documentación del campo `tech:`
+5. Agregar una sección a la página de docs de [Stacks tecnológicos](./tech-stacks)
+
+## Enviando un PR
+
+1. Forkear y clonar el repo
+2. Crear una rama: `feat/<descripcion-corta>` o `fix/<descripcion-corta>`
+3. Hacer los cambios con tests
+4. Ejecutar `npm test` y `npm run build` — ambos deben pasar
+5. Abrir un PR apuntando a `develop`
+
+El revisor va a correr en tu PR automáticamente. Resolvé cualquier hallazgo `critical` o `major` antes de pedir revisión.
+
+## Reportar issues
+
+Abrí un issue en [github.com/giolabs/ai-code-reviewer/issues](https://github.com/giolabs/ai-code-reviewer/issues).
+
+Incluir:
+- Comando exacto o step del workflow
+- Tu `.ai-review.yml` (sin API keys)
+- El output de error completo (con `DEBUG=1` si aplica)
+- Versión de Node.js (`node --version`)

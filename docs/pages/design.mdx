@@ -1,0 +1,97 @@
+# Design
+
+How the reviewer works internally — useful if you're debugging, extending, or just want to understand the decisions.
+
+## Pipeline
+
+Every review command follows the same pipeline:
+
+```
+CLI → config resolution → tech detection → prompt assembly → LLM call → output/post
+```
+
+1. **CLI** (`src/cli.ts`) — parses command and flags via Commander, delegates to the orchestrator
+2. **Config resolution** (`src/config.ts`) — merges `.ai-review.yml` over `DEFAULT_CONFIG`, loads built-in tech template from `templates/`, loads user rules markdown
+3. **Tech detection** (`src/tech-detect.ts`) — detects stack from `package.json` deps or marker files; more specific stacks checked first (NestJS before Node, Next.js before React)
+4. **Prompt assembly** (`src/prompts.ts`) — builds system prompt (role + tech rules + check categories + severity scale + language) and user prompt (PR metadata + file diffs, truncated at 80k chars)
+5. **LLM call** (`src/openai.ts`) — sends request with `json_schema` response format; the model is constrained to the `REVIEW_SCHEMA` shape
+6. **Output/post** — filters by severity, sorts by level; for `review-pr`, posts inline comments via Octokit + summary comment
+
+## Structured output
+
+The reviewer uses OpenAI's `response_format: json_schema` to constrain the model response to a precise shape. There is no regex or string parsing of LLM output — the model either returns valid JSON matching the schema, or the API rejects it.
+
+The schema enforces:
+- `findings[]` — each with `file`, `line`, `severity`, `category`, `title`, `description`, `suggestion`
+- `recommendation` — `approve` | `comment` | `request_changes`
+- `overallScore` — number 0–10
+- `summary` — string
+- `anticipatedBugs[]` — string list
+- `regressionRisks[]` — string list
+
+## Never auto-approves (by default)
+
+The mapping of LLM `recommendation` to GitHub review event explicitly downgrades `approve` → `COMMENT`:
+
+```typescript
+private mapRecommendationToEvent(recommendation: Recommendation): ReviewEvent {
+  if (recommendation === 'request_changes') return 'REQUEST_CHANGES';
+  return 'COMMENT'; // approve → COMMENT; only human reviewers approve
+}
+```
+
+Auto-approve is available as an opt-in feature. When enabled, `shouldAutoApprove()` checks that the model recommends `approve`, there are no `critical`/`major` findings, and `overallScore` meets `minScore`. Only then does the bot post a real GitHub `APPROVE`. See [Auto-Approve](./auto-approve).
+
+## Dependency graph (JS/TS only)
+
+For JavaScript and TypeScript stacks, the reviewer builds a one-level dependency graph of the changed files before sending to the LLM:
+
+1. Parse `import` statements from each changed file
+2. Resolve the imported paths relative to the file
+3. Read the content of those imported files (one level deep)
+4. Include that context in the user prompt alongside the diffs
+
+This gives the model visibility into callers and dependencies, enabling detection of regression risks beyond the changed files themselves.
+
+## Inline comment placement
+
+When posting PR review comments, `buildDiffLineMap()` in `src/github.ts` parses the unified diff to determine which line positions in the diff are commentable. Only lines that appear in the diff (additions, context lines) can receive inline comments; GitHub's API rejects comments on lines outside the diff.
+
+Findings that can't be mapped to a diff line are collected as "orphans" and appended to the summary comment body instead of being dropped.
+
+## Exit code
+
+`review-pr` exits with code `1` when the recommendation is `request_changes`. This allows branch protection rules to block merges when the reviewer flags serious issues, without requiring any additional workflow configuration.
+
+## Key design decisions
+
+| Decision | Rationale |
+|---|---|
+| Structured output over parsing | LLM output is constrained by the API schema — no brittle regex or prompt engineering for output format |
+| Never auto-approve by default | Human approval is a deliberate gate; the bot should not remove that without opt-in |
+| Custom rules override built-in | User rules are appended last in the system prompt, giving them the highest priority |
+| Exit code 1 on request_changes | CI integration requires no extra config — branch protection rules just work |
+| 80k char truncation per file | Keeps prompt size reasonable while still covering most realistic diffs |
+| ESM package | Consistent with modern Node.js; avoids dual-format complexity |
+
+## Source files
+
+| File | Responsibility |
+|---|---|
+| `src/cli.ts` | Commander CLI entry point; command definitions; `EXAMPLE_CONFIG` template |
+| `src/reviewer.ts` | Orchestrator; one function per command; `parseLocalDiff()` |
+| `src/config.ts` | Config loading; glob-matching for ignore patterns; built-in template loader |
+| `src/tech-detect.ts` | Stack detection; ordered from specific to generic |
+| `src/prompts.ts` | System and user prompt assembly; diff truncation |
+| `src/openai.ts` | LLM call; `REVIEW_SCHEMA`; typed `ReviewResult` |
+| `src/github.ts` | Octokit integration; `buildDiffLineMap()`; inline comment posting |
+| `src/output.ts` | Terminal output; Markdown report; severity filtering and sorting |
+| `src/types.ts` | All shared types: `Severity`, `CheckCategory`, `TechStack`, `ReviewerConfig`, etc. |
+
+## Templates
+
+`templates/` contains one Markdown file per supported stack:
+
+`nestjs-rules.md`, `nextjs-rules.md`, `react-rules.md`, `typescript-rules.md`, `node-rules.md`, `flutter-rules.md`, `laravel-rules.md`, `generic-rules.md`
+
+These are loaded at runtime by `config.ts:loadBuiltinTemplate()` and prepended to the system prompt before user custom rules.

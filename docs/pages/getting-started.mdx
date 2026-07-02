@@ -1,7 +1,4 @@
----
-title: Quick Start
-description: Add AI-powered code review to any GitHub repository in four steps.
----
+# Quick Start
 
 Add AI code review to any GitHub repository in four steps.
 
@@ -15,10 +12,31 @@ name: AI Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review_comment:
+    types: [created]
 
 jobs:
-  review:
-    if: github.event.pull_request.draft == false
+  ai-review:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch origin ${{ github.base_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  handle-feedback:
+    if: github.event_name == 'pull_request_review_comment'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -27,16 +45,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest handle-feedback
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
 ```
 
 ## 2. Add your API key
 
-The default provider is OpenAI. Add the secret to your repo: **Settings → Secrets and variables → Actions → New repository secret**
+The default provider is OpenAI. Add the secret to your repo:
+
+**Settings → Secrets and variables → Actions → New repository secret**
 
 - **Name:** `OPENAI_API_KEY`
 - **Value:** your key from [platform.openai.com](https://platform.openai.com)

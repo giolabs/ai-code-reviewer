@@ -1,0 +1,107 @@
+# Troubleshooting
+
+## Workflow not triggering
+
+**Symptom:** The workflow doesn't run when a PR is opened.
+
+**Check:**
+1. The workflow file is committed to the default branch (usually `main`). GitHub Actions workflows only run if they exist on the default branch for PRs targeting it.
+2. The trigger includes `pull_request` with the right `types`. The recommended config uses `[opened, synchronize, reopened, ready_for_review]`.
+3. Branch protection rules or repository settings aren't blocking the workflow from running.
+
+## `Error: OPENAI_API_KEY is not set`
+
+**Symptom:** Workflow fails immediately with a missing key error.
+
+**Fix:**
+1. Go to **Settings → Secrets and variables → Actions** in your GitHub repository.
+2. Add `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` for other providers).
+3. Make sure the workflow's `env:` block uses the exact secret name: `${{ secrets.OPENAI_API_KEY }}`.
+
+## `Error: Resource not accessible by integration`
+
+**Symptom:** The review runs but fails to post comments.
+
+**Fix:** Add the required permissions to the workflow job:
+
+```yaml
+jobs:
+  ai-review:
+    permissions:
+      pull-requests: write
+      contents: read
+```
+
+## No inline comments, only a summary
+
+**Symptom:** The review runs but all findings appear in the summary comment, not inline.
+
+**Explanation:** GitHub only allows inline comments on lines visible in the diff. Findings on unchanged lines or outside the diff context are moved to the summary. This is expected behavior.
+
+If you see no inline comments at all, check that `inlineComments: true` is set in your `.ai-review.yml` (it defaults to `true`).
+
+## Review posts but finds nothing
+
+**Symptom:** The bot comments but reports no issues.
+
+**Possible causes:**
+- All changed files match `ignore:` patterns
+- All findings are below `minSeverity` threshold
+- The diff is too small for the model to generate findings (e.g., a one-line change)
+- The model genuinely found nothing to flag
+
+Try running `review-diff --base main` locally with `DEBUG=1` to see the full prompt and response.
+
+## `handle-feedback` doesn't respond
+
+**Symptom:** Reply `/explain` or `/dismiss` to a bot comment but nothing happens.
+
+**Check:**
+1. The workflow has a `pull_request_review_comment` trigger.
+2. `feedback.enabled: true` is set in `.ai-review.yml`.
+3. `GITHUB_ACTOR` is passed as an env var in the `handle-feedback` step.
+4. The comment you replied to is a review comment on the diff (not a regular PR comment).
+
+See [Inline Feedback](./handle-feedback) for the full workflow setup.
+
+## `review-pr --dry-run` shows no output
+
+**Symptom:** Dry-run exits silently.
+
+**Explanation:** Dry-run only suppresses posting to GitHub — it still prints the review to the terminal. Check that the workflow step has the `--dry-run` flag and that the step's output is visible in the Actions log.
+
+## Build fails: `Cannot find module 'nextra'`
+
+This is a docs-site issue, not a reviewer issue. Run `npm install` inside the `docs/` directory.
+
+## Enable debug logging
+
+Set `DEBUG=1` in the environment to get full stack traces and the complete prompt sent to the LLM:
+
+```yaml
+- run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+  env:
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    DEBUG: "1"
+```
+
+Locally:
+
+```bash
+DEBUG=1 npx @giolabsuy/ai-code-reviewer review-diff --base main
+```
+
+import { Callout } from 'nextra/components'
+
+<Callout type="warning">
+Debug output includes the full system prompt and the LLM response. Avoid logging this in public repositories.
+</Callout>
+
+## Still stuck?
+
+Open an issue at [github.com/giolabs/ai-code-reviewer/issues](https://github.com/giolabs/ai-code-reviewer/issues) with:
+- The exact error message
+- Your `.ai-review.yml` (with secrets redacted)
+- The workflow YAML
+- The Actions log with `DEBUG=1`

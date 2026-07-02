@@ -1,0 +1,128 @@
+# Custom Rules
+
+Add project-specific review rules that the AI must follow. Your rules are appended to the built-in tech stack template and take precedence on conflicts.
+
+## Setup
+
+1. Create a `code-review-rules.md` file in your repo root (or any path you prefer).
+2. Reference it in `.ai-review.yml`:
+
+```yaml
+rules: ./code-review-rules.md
+```
+
+Or use the inline `customInstructions:` field for short snippets:
+
+```yaml
+customInstructions: |
+  This project uses Clean Architecture. Any import from the domain
+  layer into the infrastructure layer is a critical finding.
+```
+
+## Rule format
+
+Write your rules in plain Markdown. Use headers for sections, bullet lists for rules. Be direct and specific — the model reads this as part of its system prompt.
+
+```markdown
+# Team Rules
+
+## Architecture
+
+- This project follows Clean Architecture. Layers: domain → application → infrastructure → presentation.
+- Domain files (`src/domain/**`) must not import from any other layer.
+- Application files (`src/application/**`) may only import from domain.
+- Any cross-layer violation is a `critical` finding.
+
+## Error handling
+
+- Never use `console.log` for errors. Use the `Logger` class from `src/shared/logger.ts`.
+- All service methods must have a `try/catch` that converts unknown errors to `AppError`.
+
+## Naming
+
+- Repository interfaces must end with `Repository` (e.g. `UserRepository`).
+- Service implementations must end with `Service`.
+- DTOs must end with `Dto` (e.g. `CreateUserDto`).
+```
+
+## Real-world examples
+
+### NestJS + Clean Architecture
+
+```markdown
+# Project Rules
+
+## Clean Architecture enforcement
+
+- `src/domain/**` — No external imports. Only pure business logic and types.
+- `src/application/**` — May import from `domain` only. No NestJS decorators here.
+- `src/infrastructure/**` — May import from `domain` and `application`. NestJS glue goes here.
+- Flag any violation as `critical`.
+
+## DTOs
+
+- All DTOs in `src/application/dto/` must extend `BaseDto`.
+- Required fields must use `@IsNotEmpty()`. Optional fields use `@IsOptional()`.
+- Arrays use `@IsArray()` + `@ArrayMinSize(1)`.
+
+## Database
+
+- Repositories must implement the interface from `domain`. Never call TypeORM directly from a service.
+- All queries that can return multiple rows must use `.take()` and `.skip()` for pagination.
+
+## Security
+
+- Every controller method must be covered by a guard from `src/infrastructure/guards/`.
+- Never log request bodies. Never log auth tokens.
+```
+
+### Next.js team rules
+
+```markdown
+# Next.js Team Rules
+
+## Components
+
+- Server Components are the default. Add `use client` only when using hooks, event handlers, or browser APIs.
+- All `use client` components must be in `src/components/client/`. Document why the client directive is needed.
+
+## Data fetching
+
+- Never fetch data inside client components with `useEffect`. Move data fetching to the Server Component parent.
+- Mutation calls use Server Actions, not API routes, unless the route needs to be called from outside Next.js.
+
+## Environment variables
+
+- Secrets in `.env.local` only. No secret may have the `NEXT_PUBLIC_` prefix.
+- All env vars must be declared in `.env.example` with a placeholder value and a comment.
+
+## Images
+
+- Always use `next/image`. Never `<img>` for content images.
+- Always provide `alt` text. Empty `alt=""` only for decorative images.
+```
+
+### Bilingual team rules
+
+```markdown
+# Reglas del equipo / Team rules
+
+## API responses
+
+- All API responses follow the `ApiResponse<T>` wrapper from `src/types/api.ts`.
+- Error responses use `{ success: false, error: { code, message } }`.
+- Never return raw strings or untyped objects from API handlers.
+
+## i18n
+
+- All user-facing strings must use the `t()` function from `src/i18n/`.
+- Hardcoded Spanish or English strings in JSX/TSX are `major` findings.
+- Translation keys follow `<module>.<component>.<label>` naming (e.g. `auth.login.submitButton`).
+```
+
+## Tips
+
+- **Be specific about severity**: if you want a rule to block PRs, write "Flag as `critical`" or "Flag as `major`". The model follows this.
+- **Reference real paths**: "import from `src/domain/**`" is clearer than "import from the domain layer".
+- **Don't repeat built-in rules**: the tech stack template already covers common patterns. Only add what's specific to your project.
+- **Keep it concise**: rules that are too long get less weight. One specific sentence beats a paragraph.

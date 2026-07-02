@@ -1,0 +1,92 @@
+# Inicio rápido
+
+Agregá revisión de código con IA a cualquier repositorio de GitHub en cuatro pasos.
+
+## 1. Agregá el workflow
+
+Creá `.github/workflows/ai-review.yml` en tu repo:
+
+```yaml
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  ai-review:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch origin ${{ github.base_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  handle-feedback:
+    if: github.event_name == 'pull_request_review_comment'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest handle-feedback
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+```
+
+## 2. Agregá tu API key
+
+El proveedor por defecto es OpenAI. Agregá el secret a tu repo:
+
+**Settings → Secrets and variables → Actions → New repository secret**
+
+- **Nombre:** `OPENAI_API_KEY`
+- **Valor:** tu key de [platform.openai.com](https://platform.openai.com)
+
+Para usar otro proveedor (Anthropic, Gemini, Ollama), ver [Proveedores](./providers).
+
+`GITHUB_TOKEN` lo provee GitHub automáticamente — no hace falta hacer nada.
+
+## 3. (Opcional) Configurá reglas del proyecto
+
+```bash
+npx @giolabsuy/ai-code-reviewer init
+```
+
+Esto crea `.ai-review.yml` en la raíz de tu repo con todas las opciones documentadas. Editalo a tu gusto. Ver [Configuración](./configuration) para la referencia completa.
+
+## 4. Abrí un PR
+
+El próximo PR que abras dispara el workflow. El revisor publica comentarios inline sobre las líneas del diff y un resumen general con score, recomendación, bugs anticipados y riesgos de regresión.
+
+---
+
+## Qué pasa en cada PR
+
+1. El workflow hace checkout del repo y ejecuta `npx @giolabsuy/ai-code-reviewer@latest review-pr`
+2. El CLI lee `.ai-review.yml` (si existe) y detecta el stack tecnológico
+3. En stacks JS/TS, construye un grafo de dependencias de un nivel de los archivos modificados
+4. Envía los diffs + contexto al LLM configurado
+5. Los resultados se publican como comentarios inline en el diff del PR, más un comentario resumen con score, recomendación, bugs anticipados y riesgos de regresión
+6. Si la recomendación es `request_changes`, el workflow termina con código `1` — útil para bloquear merges con reglas de branch protection

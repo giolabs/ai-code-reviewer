@@ -21,5 +21,7 @@ npm-debug.log*
 
 # Docs site build output and local deps
 docs/dist/
+docs/out/
+docs/.next/
 docs/node_modules/
 docs/.astro/

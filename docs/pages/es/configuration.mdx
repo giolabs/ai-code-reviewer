@@ -1,0 +1,164 @@
+# Configuración
+
+El archivo `.ai-review.yml` (o `.ai-review.json`) en la raíz de tu repo controla el comportamiento del revisor. Todos los campos son opcionales — omitir cualquier campo usa el valor por defecto.
+
+Ejecutá `npx @giolabsuy/ai-code-reviewer init` para generar un archivo de config pre-completado.
+
+## Referencia completa
+
+```yaml
+# Proveedor LLM: openai | anthropic | gemini | ollama
+provider: openai
+
+# Modelo del proveedor. Ver la página de Proveedores para opciones por proveedor.
+model: gpt-4o-mini
+
+# Idioma de la revisión: es | en
+language: es
+
+# Stack tecnológico. Omitir para auto-detectar desde package.json
+# tech: nestjs
+
+# Reglas personalizadas adicionales (markdown). Se agregan al system prompt.
+# rules: ./code-review-rules.md
+
+# Globs de archivos a ignorar
+ignore:
+  - node_modules/**
+  - dist/**
+  - "*.lock"
+  - "*.min.js"
+
+# Severidad mínima a incluir en el output: critical | major | minor | info | nitpick
+minSeverity: minor
+
+# Tamaño máximo del patch por archivo (bytes). Archivos más grandes que este se omiten.
+maxFileSize: 100000
+
+# Categorías de checks habilitadas
+checks:
+  security: true
+  performance: true
+  maintainability: true
+  testing: true
+  documentation: false
+  style: false
+  bug-risk: true
+  architecture: true
+
+# Comportamiento de publicación
+inlineComments: true
+summaryComment: true
+maxInlineComments: 20
+
+# URL del servicio Ollama (solo relevante cuando provider: ollama)
+# ollamaUrl: http://localhost:11434
+
+# Instrucciones adicionales agregadas al system prompt
+customInstructions: |
+  Este proyecto sigue Clean Architecture. Cualquier import desde la capa
+  de dominio a infraestructura es un hallazgo 'major'.
+
+# Feature de feedback en comentarios inline (opt-in)
+feedback:
+  enabled: true
+  allowDismiss: true
+
+# Auto-aprobar cuando el modelo recomienda approve sin hallazgos bloqueantes (opt-in)
+autoApprove:
+  enabled: true
+  minScore: 7
+```
+
+## Referencia de campos
+
+### `provider`
+
+Qué proveedor LLM usar. Ver [Proveedores](./providers) para instrucciones de configuración por proveedor.
+
+**Por defecto:** `openai` | **Opciones:** `openai` | `anthropic` | `gemini` | `ollama`
+
+### `model`
+
+Nombre del modelo para el proveedor seleccionado. Cualquier modelo disponible en la API del proveedor es válido.
+
+**Por defecto:** `gpt-4o-mini` (cuando `provider: openai`)
+
+### `language`
+
+Idioma que usa el revisor para las descripciones de hallazgos y el resumen del PR.
+
+**Por defecto:** `es` | **Opciones:** `es` | `en`
+
+### `tech`
+
+Forzar un stack tecnológico específico en lugar de auto-detectar.
+
+**Por defecto:** auto-detectado | **Opciones:** `nestjs` | `nextjs` | `react` | `typescript` | `node` | `flutter` | `laravel` | `generic`
+
+### `rules`
+
+Ruta a un archivo Markdown de reglas personalizadas relativo a la raíz del repo. Se agrega al system prompt después del template built-in.
+
+### `ignore`
+
+Array de patrones glob para archivos a excluir de la revisión.
+
+**Por defecto:** `["node_modules/**", "dist/**", "*.lock", "*.min.js"]`
+
+### `minSeverity`
+
+Solo se incluyen en el output los hallazgos de esta severidad o superior.
+
+**Por defecto:** `minor` | **Orden:** `critical` → `major` → `minor` → `info` → `nitpick`
+
+### `maxFileSize`
+
+Los archivos con un patch más grande que este número de bytes se omiten.
+
+**Por defecto:** `100000` (100 KB)
+
+### `checks`
+
+Activar o desactivar categorías individuales de checks.
+
+| Categoría | Por defecto | Descripción |
+|---|---|---|
+| `security` | `true` | Auth, inyección, secrets, XSS |
+| `performance` | `true` | Consultas N+1, operaciones bloqueantes, renders innecesarios |
+| `maintainability` | `true` | Complejidad, naming, duplicación |
+| `testing` | `true` | Tests faltantes, mocks incorrectos, assertions vagas |
+| `documentation` | `false` | Docstrings faltantes, comentarios |
+| `style` | `false` | Formato, espacios en blanco |
+| `bug-risk` | `true` | Null safety, condiciones de carrera, off-by-one |
+| `architecture` | `true` | Violaciones de capas, acoplamiento |
+
+### `inlineComments`
+
+Publicar hallazgos como comentarios inline en el diff del PR.
+
+**Por defecto:** `true`
+
+### `maxInlineComments`
+
+Límite de comentarios inline por revisión. Los hallazgos adicionales van al cuerpo del comentario resumen.
+
+**Por defecto:** `20`
+
+### `feedback.enabled`
+
+Habilitar los comandos de feedback `/explain` y `/dismiss`. Requiere el workflow `handle-feedback`. Ver [Feedback inline](./handle-feedback).
+
+**Por defecto:** `false`
+
+### `autoApprove.enabled`
+
+Cuando el modelo recomienda `approve` y no hay hallazgos `critical` o `major`, el bot publica un evento GitHub `APPROVE` real. Ver [Auto-aprobar](./auto-approve).
+
+**Por defecto:** `false`
+
+### `autoApprove.minScore`
+
+`overallScore` mínimo (0–10) requerido para auto-aprobar. Si el score está por debajo de este umbral, el bot vuelve a `COMMENT`. Se ignora cuando `overallScore` está ausente en la respuesta del modelo.
+
+**Por defecto:** `7`

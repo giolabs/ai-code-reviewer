@@ -1,7 +1,4 @@
----
-title: Providers
-description: Configure OpenAI, Anthropic, Gemini, or Ollama as the LLM provider for your code reviews.
----
+# Providers
 
 The reviewer supports four LLM providers. Configure your preferred one in `.ai-review.yml`:
 
@@ -31,7 +28,7 @@ model: gpt-4o-mini   # or gpt-4o for higher quality
 
 ```yaml
 # GitHub Actions workflow
-- run: npx -y ai-code-reviewer@latest review-pr
+- run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -49,7 +46,7 @@ model: claude-sonnet-4-20250514
 
 ```yaml
 # GitHub Actions workflow
-- run: npx -y ai-code-reviewer@latest review-pr
+- run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,7 +64,7 @@ model: gemini-1.5-flash   # or gemini-1.5-pro for higher quality
 
 ```yaml
 # GitHub Actions workflow
-- run: npx -y ai-code-reviewer@latest review-pr
+- run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
   env:
     GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -86,6 +83,8 @@ ollamaUrl: http://localhost:11434   # default if omitted
 
 For GitHub Actions, Ollama must be running as a service in the job or reachable via a network URL. For local use, just start `ollama serve` before running the reviewer.
 
-:::tip
+import { Callout } from 'nextra/components'
+
+<Callout type="info">
 For most teams, **OpenAI `gpt-4o-mini`** is the best starting point — good quality, low cost, and structured output guarantees.
-:::
+</Callout>

@@ -1,0 +1,93 @@
+# Contributing
+
+## Development setup
+
+```bash
+git clone https://github.com/giolabs/ai-code-reviewer.git
+cd ai-code-reviewer
+npm install
+```
+
+Copy the example env file and add your API key:
+
+```bash
+cp .env.example .env
+# edit .env and add OPENAI_API_KEY=sk-...
+```
+
+Run commands directly from source (no build step needed):
+
+```bash
+npm run dev -- review-file src/cli.ts
+npm run dev -- review-diff --staged
+```
+
+## Build
+
+```bash
+npm run build    # tsc → dist/
+npm run clean    # rm -rf dist
+```
+
+## Tests
+
+```bash
+npm test         # vitest run (single pass)
+npm run test:watch   # vitest watch mode
+```
+
+Tests live in `__test__/`, mirroring the structure of `src/`. See the [Design](./design) page for architecture context.
+
+## Code conventions
+
+All code is in **English** without exception: class names, method names, variable names, interfaces, file names. The only content in Spanish is user-facing CLI output and the README.
+
+Key TypeScript rules enforced in this project:
+
+- No `any` or `unknown` as types — model the shape explicitly
+- No standalone functions at module scope — all logic lives in a class
+- No separate positional parameters — all params grouped in a typed interface
+- Explicit return types on all class methods
+- `async/await` over `.then()` chains
+
+See `CLAUDE.md` at the repo root for the full TypeScript coding standards.
+
+## Adding a provider
+
+Providers are implemented in `src/openai.ts` (despite the name, it handles all providers). To add a new provider:
+
+1. Add the provider name to the `Provider` union type in `src/types.ts`
+2. Add a case to the provider switch in `src/openai.ts`
+3. Add the API key env var name to `PROVIDER_ENV_VAR_MAP`
+4. Add a row to the [Providers](./providers) docs page
+5. Add test coverage in `__test__/openai.test.ts`
+
+## Adding a tech stack template
+
+Templates are Markdown files in `templates/`. To add a new stack:
+
+1. Create `templates/<stack>-rules.md` with review rules for the stack
+2. Add the stack to the `TechStack` enum in `src/types.ts`
+3. Add detection logic to `src/tech-detect.ts` (before the generic fallback)
+4. Add the config value to the `tech:` field documentation
+5. Add a section to the [Tech Stacks](./tech-stacks) docs page
+
+## Submitting a PR
+
+1. Fork and clone the repo
+2. Create a branch: `feat/<short-description>` or `fix/<short-description>`
+3. Make your changes with tests
+4. Run `npm test` and `npm run build` — both must pass
+5. Open a PR targeting `develop`
+
+The reviewer will run on your PR automatically. Address any `critical` or `major` findings before requesting review.
+
+## Reporting issues
+
+Open an issue at [github.com/giolabs/ai-code-reviewer/issues](https://github.com/giolabs/ai-code-reviewer/issues).
+
+Include:
+- Exact command or workflow step
+- Your `.ai-review.yml` (redact API keys)
+- The full error output (with `DEBUG=1` if applicable)
+- Node.js version (`node --version`)

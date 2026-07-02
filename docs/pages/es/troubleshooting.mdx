@@ -1,0 +1,97 @@
+# Solución de problemas
+
+## El workflow no se dispara
+
+**Síntoma:** El workflow no corre cuando se abre un PR.
+
+**Verificar:**
+1. El archivo del workflow está commiteado en la rama por defecto (generalmente `main`). Los workflows de GitHub Actions solo corren si existen en la rama por defecto para PRs que apuntan a ella.
+2. El trigger incluye `pull_request` con los `types` correctos. La config recomendada usa `[opened, synchronize, reopened, ready_for_review]`.
+3. Las reglas de branch protection o la configuración del repositorio no están bloqueando el workflow.
+
+## `Error: OPENAI_API_KEY is not set`
+
+**Síntoma:** El workflow falla inmediatamente con un error de key faltante.
+
+**Solución:**
+1. Ir a **Settings → Secrets and variables → Actions** en tu repositorio de GitHub.
+2. Agregar `OPENAI_API_KEY` (o `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` para otros proveedores).
+3. Asegurarse de que el bloque `env:` del workflow use el nombre exacto del secret: `${{ secrets.OPENAI_API_KEY }}`.
+
+## `Error: Resource not accessible by integration`
+
+**Síntoma:** La revisión corre pero falla al publicar comentarios.
+
+**Solución:** Agregar los permisos requeridos al job del workflow:
+
+```yaml
+jobs:
+  ai-review:
+    permissions:
+      pull-requests: write
+      contents: read
+```
+
+## Sin comentarios inline, solo un resumen
+
+**Síntoma:** La revisión corre pero todos los hallazgos aparecen en el comentario resumen, no inline.
+
+**Explicación:** GitHub solo permite comentarios inline en líneas visibles en el diff. Los hallazgos en líneas sin cambios o fuera del contexto del diff se mueven al resumen. Este es el comportamiento esperado.
+
+Si no ves ningún comentario inline en absoluto, verificá que `inlineComments: true` esté configurado en tu `.ai-review.yml` (es el valor por defecto).
+
+## La revisión se publica pero no encuentra nada
+
+**Síntoma:** El bot comenta pero no reporta problemas.
+
+**Posibles causas:**
+- Todos los archivos modificados coinciden con patrones `ignore:`
+- Todos los hallazgos están por debajo del umbral `minSeverity`
+- El diff es demasiado pequeño para que el modelo genere hallazgos (ej. un cambio de una línea)
+- El modelo genuinamente no encontró nada que marcar
+
+Probá ejecutar `review-diff --base main` localmente con `DEBUG=1` para ver el prompt completo y la respuesta.
+
+## `handle-feedback` no responde
+
+**Síntoma:** Respondés `/explain` o `/dismiss` a un comentario del bot pero no pasa nada.
+
+**Verificar:**
+1. El workflow tiene un trigger `pull_request_review_comment`.
+2. `feedback.enabled: true` está configurado en `.ai-review.yml`.
+3. `GITHUB_ACTOR` se pasa como variable de entorno en el step de `handle-feedback`.
+4. El comentario al que respondiste es un comentario de revisión en el diff (no un comentario regular del PR).
+
+Ver [Feedback inline](./handle-feedback) para la configuración completa del workflow.
+
+## Habilitar logging de debug
+
+Configurá `DEBUG=1` en el entorno para obtener stack traces completos y el prompt completo enviado al LLM:
+
+```yaml
+- run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+  env:
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    DEBUG: "1"
+```
+
+Localmente:
+
+```bash
+DEBUG=1 npx @giolabsuy/ai-code-reviewer review-diff --base main
+```
+
+import { Callout } from 'nextra/components'
+
+<Callout type="warning">
+El output de debug incluye el system prompt completo y la respuesta del LLM. Evitá loggearlo en repositorios públicos.
+</Callout>
+
+## ¿Seguís sin solución?
+
+Abrí un issue en [github.com/giolabs/ai-code-reviewer/issues](https://github.com/giolabs/ai-code-reviewer/issues) con:
+- El mensaje de error exacto
+- Tu `.ai-review.yml` (con secrets redactados)
+- El YAML del workflow
+- El log de Actions con `DEBUG=1`

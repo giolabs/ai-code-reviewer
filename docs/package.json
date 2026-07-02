@@ -1,14 +1,29 @@
 {
   "name": "ai-code-reviewer-docs",
-  "type": "module",
   "version": "0.0.1",
+  "private": true,
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.40.0",
-    "astro": "^6.4.5"
+    "next": "14.2.29",
+    "nextra": "2.13.4",
+    "nextra-theme-docs": "2.13.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.1",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "shiki": "0.14.7"
   }
 }

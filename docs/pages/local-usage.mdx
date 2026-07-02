@@ -1,7 +1,4 @@
----
-title: Local Usage
-description: Run the reviewer locally with review-file, review-diff, and as a pre-commit hook.
----
+# Local Usage
 
 All three commands work locally without a GitHub repository. You only need an API key for your chosen provider.
 
@@ -104,9 +101,11 @@ npx @giolabsuy/ai-code-reviewer review-diff --staged --min-severity major
 chmod +x .git/hooks/pre-commit
 ```
 
-:::tip
+import { Callout } from 'nextra/components'
+
+<Callout type="tip">
 Use `--min-severity major` in pre-commit hooks to avoid blocking commits on `minor`/`nitpick` findings. Save those for the full PR review.
-:::
+</Callout>
 
 ## Save a Markdown report
 

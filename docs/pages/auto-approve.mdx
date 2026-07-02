@@ -1,0 +1,86 @@
+# Auto-Approve
+
+By default, the reviewer never posts a GitHub `APPROVE` event — only `COMMENT` or `REQUEST_CHANGES`. This keeps human approval as a deliberate gate.
+
+The auto-approve feature is an opt-in that allows the bot to post a real `APPROVE` when it's confident the PR is clean.
+
+## Conditions
+
+All four conditions must be met simultaneously:
+
+1. `autoApprove.enabled: true` in config
+2. The model's recommendation is `approve`
+3. No `critical` or `major` findings in the review
+4. `overallScore` ≥ `autoApprove.minScore` (default: 7), **or** the model didn't return a score
+
+If any condition fails, the bot falls back to `COMMENT` and explains why it didn't approve.
+
+## Setup
+
+```yaml
+# .ai-review.yml
+autoApprove:
+  enabled: true
+  minScore: 7    # 0–10 scale; 7 is the default
+```
+
+No workflow changes needed. The `review-pr` command reads the config and handles the rest.
+
+## Dismissing previous reviews
+
+If the bot previously posted a `REQUEST_CHANGES` review on the same PR, and the new review qualifies for approval, the bot automatically **dismisses its own previous review** before posting `APPROVE`. This prevents the PR from being blocked by a stale review.
+
+This uses GitHub's dismiss-review API and only dismisses reviews posted by the same bot account (`GITHUB_TOKEN`). It never dismisses human reviews.
+
+## Score threshold
+
+The `minScore` field is a safety floor. Even if the model recommends `approve` and there are no blocking findings, a low overall score (e.g., a PR that "technically works but is a mess") won't get auto-approved.
+
+Set `minScore: 0` to approve on any `approve` recommendation regardless of score. Set a higher value (e.g., `8` or `9`) for stricter teams.
+
+If the model doesn't return an `overallScore` field (older model versions or providers that don't support structured output well), the score condition is skipped and the other three conditions still apply.
+
+## Skip reasons
+
+When the bot falls back to `COMMENT` instead of `APPROVE`, it includes the reason in the summary comment:
+
+| Skip reason | Message |
+|---|---|
+| Feature disabled | *(feature not active — no message)* |
+| Model didn't recommend approve | "Model recommendation: `request_changes` / `comment`" |
+| Critical/major findings present | "Found N blocking finding(s)" |
+| Score below threshold | "Score X is below minimum Y" |
+
+## Example
+
+A PR with all minor findings, score 8.5, and `approve` recommendation:
+
+```
+✅ Auto-approved by ai-code-reviewer
+
+Score: 8.5/10 · Recommendation: approve · 0 blocking findings
+
+Minor findings (3):
+  • Consider extracting the query builder into a repository method
+  • Variable name `d` is too short — rename to `document`
+  • Missing JSDoc on the exported type
+
+No critical or major issues found.
+```
+
+import { Callout } from 'nextra/components'
+
+<Callout type="warning">
+Auto-approve removes the human review gate for these PRs. Enable it only for teams that trust the model's judgment on their codebase, and use branch protection rules to require at least one human approval alongside the bot.
+</Callout>
+
+## Combining with branch protection
+
+A recommended setup for teams that want AI review as a gate but still require human sign-off:
+
+1. Enable auto-approve in `.ai-review.yml`
+2. Add a branch protection rule requiring:
+   - Status check: `AI Code Review / ai-review` must pass
+   - Required reviews: at least 1 human approval
+
+With this setup, the bot approves clean PRs automatically, reducing the reviewer's cognitive load for straightforward changes. The human reviewer can focus on the `COMMENT` and `REQUEST_CHANGES` cases.

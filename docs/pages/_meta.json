@@ -1,0 +1,20 @@
+{
+  "index": {
+    "title": "Home",
+    "display": "hidden"
+  },
+  "getting-started": "Quick Start",
+  "local-usage": "Local Usage",
+  "providers": "Providers",
+  "configuration": "Configuration",
+  "cli-reference": "CLI Reference",
+  "tech-stacks": "Tech Stacks",
+  "custom-rules": "Custom Rules",
+  "handle-feedback": "Inline Feedback",
+  "auto-approve": "Auto-Approve",
+  "design": "Design Decisions",
+  "limitations": "Known Limitations",
+  "changelog": "Changelog",
+  "troubleshooting": "Troubleshooting",
+  "contributing": "Contributing"
+}
