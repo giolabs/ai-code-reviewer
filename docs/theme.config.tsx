@@ -4,10 +4,10 @@ import type { ReactElement } from 'react'
 
 function LanguageSwitcher(): ReactElement {
   const { asPath } = useRouter()
-  const isEs = asPath.startsWith('/es/')
+  const isEs = asPath.startsWith('/es')
   const target = isEs
-    ? asPath.replace(/^\/es\//, '/')
-    : '/es' + (asPath === '/' ? '/getting-started' : asPath)
+    ? asPath.replace(/^\/es/, '') || '/'
+    : '/es' + asPath
   return (
     <a
       href={'/ai-code-reviewer' + target}

@@ -1,0 +1,69 @@
+# AI Code Reviewer
+
+**AI-powered code review for GitHub PRs.** Runs as a GitHub Actions step. Supports OpenAI, Anthropic, Gemini, and Ollama.
+
+```bash
+npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+```
+
+## Features
+
+- **Inline comments** — Findings posted directly on PR diff lines, with severity labels (`critical` → `nitpick`)
+- **Multi-provider** — OpenAI, Anthropic, Gemini, and self-hosted Ollama. Switch with one line in your config
+- **Inline feedback** — Reply `/explain` to any bot comment for a deep explanation, or `/dismiss` to resolve it
+- **Auto-approve** — Approves clean PRs automatically when the model is confident (opt-in)
+- **Dependency graph** — Analyzes callers and imports of changed JS/TS files to surface regression risks
+- **Custom rules** — Add project-specific review rules in Markdown; your rules override the built-ins
+
+## Quick Start
+
+Create `.github/workflows/ai-review.yml` in your repo:
+
+```yaml
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  ai-review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch origin ${{ github.base_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Add `OPENAI_API_KEY` to **Settings → Secrets and variables → Actions** in your repo and you're done.
+
+→ [Full setup guide with inline feedback and auto-approve](/getting-started)
+
+## Install
+
+```bash
+# Run directly (no install)
+npx @giolabsuy/ai-code-reviewer review-file src/users/users.service.ts
+
+# Global install
+npm install -g @giolabsuy/ai-code-reviewer
+
+# Project devDependency
+npm install --save-dev @giolabsuy/ai-code-reviewer
+```
+
+## License
+
+[MIT](https://github.com/giolabs/ai-code-reviewer/blob/main/LICENSE) · [npm](https://www.npmjs.com/package/@giolabsuy/ai-code-reviewer) · [GitHub](https://github.com/giolabs/ai-code-reviewer)

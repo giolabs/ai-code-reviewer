@@ -1,8 +1,5 @@
 {
-  "index": {
-    "title": "Home",
-    "display": "hidden"
-  },
+  "index": "Introduction",
   "getting-started": "Quick Start",
   "local-usage": "Local Usage",
   "providers": "Providers",
