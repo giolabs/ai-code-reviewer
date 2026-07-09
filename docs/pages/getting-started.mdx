@@ -11,7 +11,7 @@ name: AI Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
   pull_request_review_comment:
     types: [created]
 
@@ -79,6 +79,8 @@ This creates `.ai-review.yml` at the root of your repo with all defaults documen
 ## 4. Open a PR
 
 The next PR you open triggers the workflow. The reviewer posts inline comments on lines with findings and a general summary with score and recommendation.
+
+The workflow also fires when a reviewer is requested — add the bot account as a reviewer on any PR and the review starts automatically.
 
 ---
 
