@@ -1,7 +1,32 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GitHubClient, buildFindingMetadata } from '../src/github.js';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import {
+  GitHubClient,
+  buildFindingMetadata,
+  getReviewCommentEventFromEnv,
+  getPullRequestContextFromEnv,
+  buildDiffLineMap,
+} from '../src/github.js';
+import type { ChangedFile } from '../src/types.js';
 import { FindingStatus } from '../src/types.js';
 import type { ReviewFinding } from '../src/types.js';
+
+// ---------------------------------------------------------------------------
+// Shared temp-file helpers
+// ---------------------------------------------------------------------------
+
+let tempDir: string | null = null;
+
+function writeTempEvent(payload: object): string {
+  if (!tempDir) {
+    tempDir = mkdtempSync(join(tmpdir(), 'github-test-'));
+  }
+  const filePath = join(tempDir, 'event.json');
+  writeFileSync(filePath, JSON.stringify(payload), 'utf-8');
+  return filePath;
+}
 
 function makeReviewFinding(overrides: Partial<ReviewFinding> = {}): ReviewFinding {
   return {
@@ -121,5 +146,220 @@ describe('buildFindingMetadata', () => {
     // Assert
     expect(metadata.status).toBe('open');
     expect(metadata.dismissedBy).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getReviewCommentEventFromEnv
+// ---------------------------------------------------------------------------
+
+describe('getReviewCommentEventFromEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = null;
+    }
+  });
+
+  it('should return null when GITHUB_REPOSITORY is not set', () => {
+    // Arrange
+    vi.stubEnv('GITHUB_REPOSITORY', '');
+    vi.stubEnv('GITHUB_EVENT_PATH', '/some/path');
+
+    // Act
+    const result = getReviewCommentEventFromEnv();
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return null when GITHUB_EVENT_PATH points to a missing file', () => {
+    // Arrange
+    vi.stubEnv('GITHUB_REPOSITORY', 'my-org/my-repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', '/nonexistent/path/event.json');
+
+    // Act
+    const result = getReviewCommentEventFromEnv();
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return parsed event when the event file contains a valid pull_request_review_comment', () => {
+    // Arrange
+    const payload = {
+      comment: { id: 200, body: '/explain', in_reply_to_id: 100 },
+      pull_request: { number: 5 },
+      sender: { login: 'dev-user' },
+    };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'my-org/my-repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getReviewCommentEventFromEnv();
+
+    // Assert
+    expect(result).toEqual({
+      actor: 'dev-user',
+      commentId: 200,
+      commentBody: '/explain',
+      inReplyToId: 100,
+      pullNumber: 5,
+      owner: 'my-org',
+      repo: 'my-repo',
+    });
+  });
+
+  it('should return null inReplyToId when the comment has no in_reply_to_id field', () => {
+    // Arrange
+    const payload = {
+      comment: { id: 300, body: 'just a comment' },
+      pull_request: { number: 7 },
+      sender: { login: 'another-user' },
+    };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'my-org/my-repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getReviewCommentEventFromEnv();
+
+    // Assert
+    expect(result?.inReplyToId).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getPullRequestContextFromEnv
+// ---------------------------------------------------------------------------
+
+describe('getPullRequestContextFromEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = null;
+    }
+  });
+
+  it('should return null when GITHUB_REPOSITORY is not set', () => {
+    // Arrange
+    vi.stubEnv('GITHUB_REPOSITORY', '');
+    vi.stubEnv('GITHUB_EVENT_PATH', '/some/path');
+
+    // Act
+    const result = getPullRequestContextFromEnv();
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return a PullRequestContext when the event file contains a valid pull_request payload', () => {
+    // Arrange
+    const payload = {
+      pull_request: {
+        number: 42,
+        title: 'Fix auth bug',
+        body: 'Fixes the login crash',
+        head: { sha: 'abc123def456' },
+        base: { sha: '111222333444' },
+      },
+    };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'my-org/my-repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getPullRequestContextFromEnv();
+
+    // Assert
+    expect(result).toEqual({
+      owner: 'my-org',
+      repo: 'my-repo',
+      pullNumber: 42,
+      headSha: 'abc123def456',
+      baseSha: '111222333444',
+      title: 'Fix auth bug',
+      body: 'Fixes the login crash',
+    });
+  });
+
+  it('should return null when the event payload has no pull_request field', () => {
+    // Arrange
+    const payload = { action: 'created', comment: { id: 1, body: 'hello' } };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'my-org/my-repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getPullRequestContextFromEnv();
+
+    // Assert
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDiffLineMap
+// ---------------------------------------------------------------------------
+
+describe('buildDiffLineMap', () => {
+  it('should return an empty map when given no changed files', () => {
+    // Arrange
+    const files: ChangedFile[] = [];
+
+    // Act
+    const result = buildDiffLineMap(files);
+
+    // Assert
+    expect(result.size).toBe(0);
+  });
+
+  it('should include all added line numbers for a single changed file', () => {
+    // Arrange
+    const files: ChangedFile[] = [
+      {
+        path: 'src/auth.ts',
+        status: 'modified',
+        patch: '@@ -1,3 +1,4 @@\n line1\n line2\n+added line\n line3',
+        additions: 1,
+        deletions: 0,
+      },
+    ];
+
+    // Act
+    const result = buildDiffLineMap(files);
+
+    // Assert
+    expect(result.get('src/auth.ts')).toEqual(new Set([3]));
+  });
+
+  it('should build a separate line set for each file path', () => {
+    // Arrange
+    const files: ChangedFile[] = [
+      {
+        path: 'src/a.ts',
+        status: 'modified',
+        patch: '@@ -1,1 +1,2 @@\n line1\n+new line',
+        additions: 1,
+        deletions: 0,
+      },
+      {
+        path: 'src/b.ts',
+        status: 'added',
+        patch: '@@ -0,0 +1,1 @@\n+only line',
+        additions: 1,
+        deletions: 0,
+      },
+    ];
+
+    // Act
+    const result = buildDiffLineMap(files);
+
+    // Assert
+    expect(result.get('src/a.ts')).toEqual(new Set([2]));
+    expect(result.get('src/b.ts')).toEqual(new Set([1]));
   });
 });
