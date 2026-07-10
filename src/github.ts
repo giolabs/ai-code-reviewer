@@ -18,6 +18,30 @@ interface GitHubClientOptions {
   token?: string;
 }
 
+interface InlineCommentEntry {
+  path: string;
+  line: number;
+  body: string;
+  finding: ReviewFinding;
+}
+
+interface ReviewThreadNode {
+  id: string;
+  comments: {
+    nodes: Array<{ id: string }>;
+  };
+}
+
+interface ReviewThreadsResponse {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        nodes: ReviewThreadNode[];
+      };
+    };
+  };
+}
+
 interface PostReviewArgs {
   summary: string;
   findings: ReviewFinding[];
@@ -131,18 +155,19 @@ export class GitHubClient {
   async postReview(ctx: PullRequestContext, args: PostReviewArgs): Promise<number> {
     const { summary, findings, event, inlineComments, maxInlineComments, diffLineMap } = args;
 
-    const inline: { path: string; line: number; body: string }[] = [];
+    const inline: InlineCommentEntry[] = [];
     const orphans: ReviewFinding[] = [];
 
     if (inlineComments) {
       for (const f of findings) {
         const fileDiff = diffLineMap.get(f.file);
         if (fileDiff?.has(f.line) && inline.length < maxInlineComments) {
-          const metadata = buildFindingMetadata(f, 0, '');
+          const placeholderMetadata = buildFindingMetadata(f, 0, '');
           inline.push({
             path: f.file,
             line: f.line,
-            body: formatInlineCommentBody(f, metadata),
+            body: formatInlineCommentBody(f, placeholderMetadata),
+            finding: f,
           });
         } else {
           orphans.push(f);
@@ -169,7 +194,76 @@ export class GitHubClient {
       })),
     });
 
+    if (inline.length > 0) {
+      await this.patchInlineCommentMetadata(ctx, review.data.id, inline);
+    }
+
     return review.data.id;
+  }
+
+  private async patchInlineCommentMetadata(
+    ctx: PullRequestContext,
+    reviewId: number,
+    inlineEntries: ReadonlyArray<InlineCommentEntry>,
+  ): Promise<void> {
+    const reviewCommentsResponse = await this.octokit.pulls.listCommentsForReview({
+      owner: ctx.owner,
+      repo: ctx.repo,
+      pull_number: ctx.pullNumber,
+      review_id: reviewId,
+      per_page: 100,
+    });
+
+    const threads = await this.fetchReviewThreads(ctx.owner, ctx.repo, ctx.pullNumber);
+
+    const threadByCommentNodeId = new Map<string, string>();
+    for (const thread of threads) {
+      const firstComment = thread.comments.nodes[0];
+      if (firstComment) {
+        threadByCommentNodeId.set(firstComment.id, thread.id);
+      }
+    }
+
+    for (const rc of reviewCommentsResponse.data) {
+      const entry = inlineEntries.find((e) => e.path === rc.path && e.line === rc.line);
+      if (!entry) continue;
+
+      const threadNodeId = threadByCommentNodeId.get(rc.node_id) ?? '';
+      const metadata = buildFindingMetadata(entry.finding, rc.id, threadNodeId);
+      const newBody = this.embedFindingMetadata(entry.body, metadata);
+
+      await this.octokit.pulls.updateReviewComment({
+        owner: ctx.owner,
+        repo: ctx.repo,
+        comment_id: rc.id,
+        body: newBody,
+      });
+    }
+  }
+
+  private async fetchReviewThreads(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<ReadonlyArray<ReviewThreadNode>> {
+    const response = await this.graphqlWithAuth<ReviewThreadsResponse>(
+      `query GetReviewThreads($owner: String!, $repo: String!, $pullNumber: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $pullNumber) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                comments(first: 1) {
+                  nodes { id }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { owner, repo, pullNumber },
+    );
+    return response.repository.pullRequest.reviewThreads.nodes;
   }
 
   async postReply(options: PostReplyOptions): Promise<void> {
