@@ -14,9 +14,20 @@ import {
   GitHubClient,
   buildDiffLineMap,
   getPullRequestContextFromEnv,
+  getPushEventShasFromEnv,
 } from './github.js';
-import type { PrReview } from './github.js';
-import type { ChangedFile, ReviewerConfig, ReviewResult, TechStack, PullRequestContext } from './types.js';
+import type { PrReview, PrReviewComment } from './github.js';
+import { ThreadResolver } from './thread-resolver.js';
+import type {
+  ChangedFile,
+  ReviewerConfig,
+  ReviewResult,
+  TechStack,
+  PullRequestContext,
+  PushEventShas,
+  PriorFinding,
+} from './types.js';
+import { FindingStatus } from './types.js';
 import type { LLMConfig } from './llm/types.js';
 
 interface ReviewerCliOptions {
@@ -72,6 +83,161 @@ function logHeader(tech: string, provider: string, model: string, language: stri
   console.log();
 }
 
+function stripMetadataBlock(body: string): string {
+  return body.replace(/\n?<!-- ai-review-finding:[\s\S]*?-->/, '').trim();
+}
+
+function collectPriorOpenFindings(
+  comments: ReadonlyArray<PrReviewComment>,
+  githubClient: GitHubClient,
+): ReadonlyArray<PriorFinding> {
+  const findings: PriorFinding[] = [];
+  for (const comment of comments) {
+    const metadata = githubClient.extractFindingMetadata(comment.body);
+    if (!metadata || (metadata.status as string) !== FindingStatus.Open) continue;
+
+    const stripped = stripMetadataBlock(comment.body);
+    const firstLine = stripped.split('\n')[0] ?? '';
+    const lastMarker = firstLine.lastIndexOf(' · ');
+    const title = lastMarker >= 0 ? firstLine.slice(lastMarker + 3) : firstLine;
+    const description = stripped.split('\n').slice(1).join('\n').trim();
+
+    findings.push({
+      file: metadata.file,
+      line: metadata.line,
+      severity: metadata.severity,
+      title,
+      description,
+    });
+  }
+  return findings;
+}
+
+// Returns false when the caller should fall through to a full review (e.g. Compare API error).
+// Returns ReviewPRResult when regressions were found and posted.
+// Returns null when incremental review completed cleanly with no regressions to post.
+async function runIncrementalReview(args: {
+  ctx: PullRequestContext;
+  config: ReviewerConfig;
+  pushShas: PushEventShas;
+  priorFindings: ReadonlyArray<PriorFinding>;
+  githubClient: GitHubClient;
+  mergedRulesText: string;
+  tech: TechStack;
+  resolvedModel: string;
+  opts: ReviewerCliOptions;
+}): Promise<ReviewPRResult | null | false> {
+  const { ctx, config, pushShas, priorFindings, githubClient, mergedRulesText, tech, resolvedModel, opts } = args;
+
+  let incrementalFiles: ChangedFile[] = [];
+  try {
+    incrementalFiles = await githubClient.getCompareFiles(ctx.owner, ctx.repo, pushShas.before, pushShas.after);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(chalk.yellow(`⚠ No se pudo obtener el compare diff: ${msg}. Cayendo a full review.`));
+    return false;
+  }
+
+  const filteredPaths = ConfigLoader.filterIgnored(
+    incrementalFiles.map((f) => f.path),
+    config.ignore,
+  );
+  const filtered = incrementalFiles
+    .filter((f) => filteredPaths.includes(f.path))
+    .filter((f) => f.status !== 'removed')
+    .filter((f) => !f.patch || f.patch.length <= config.maxFileSize);
+
+  if (filtered.length === 0) {
+    console.log(chalk.dim('Modo incremental: sin archivos nuevos en este push. Chequeando threads resueltos...'));
+  } else {
+    console.log(
+      chalk.dim(
+        `Modo incremental: ${filtered.length} archivo(s) nuevos en este push · ${priorFindings.length} finding(s) abiertos del review anterior`,
+      ),
+    );
+  }
+
+  const summaryCommentId = await githubClient.findBotSummaryCommentId(ctx.owner, ctx.repo, ctx.pullNumber);
+  if (summaryCommentId === 0) {
+    console.log(chalk.dim('Modo incremental: no se encontró el comment resumen del bot.'));
+  }
+
+  let result: ReviewResult | null = null;
+
+  if (filtered.length > 0) {
+    const promptBuilder = new PromptBuilder();
+    const systemPrompt = promptBuilder.buildIncrementalSystemPrompt({ config, tech, mergedRulesText });
+    const userPrompt = promptBuilder.buildIncrementalUserPrompt({
+      files: filtered,
+      priorFindings,
+      prTitle: ctx.title,
+    });
+
+    const llmConfig: LLMConfig = {
+      provider: config.provider,
+      model: resolvedModel,
+      ollamaUrl: config.ollamaUrl,
+      temperature: 0.2,
+    };
+
+    const adapter = createLLMAdapter(llmConfig);
+    const providerDisplay = config.provider.charAt(0).toUpperCase() + config.provider.slice(1);
+    console.log(chalk.dim(`Llamando a ${providerDisplay}...`));
+
+    const response = await adapter.review({ systemPrompt, userPrompt });
+    const parser = new ReviewJsonParser();
+    const parsed = parser.parse(response.content);
+    result = { ...parsed, tokensUsed: response.tokensUsed };
+
+    const formatter = new OutputFormatter();
+    result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
+    formatter.print(result);
+  }
+
+  const resolver = new ThreadResolver({ githubClient });
+  await resolver.resolveFixed({
+    pullNumber: ctx.pullNumber,
+    owner: ctx.owner,
+    repo: ctx.repo,
+    newFindings: result?.findings ?? [],
+    changedFiles: filtered.map((f) => f.path),
+    commitSha: ctx.headSha,
+    summaryCommentId,
+  });
+
+  if (!result || result.findings.length === 0) {
+    if (filtered.length > 0) {
+      console.log(chalk.dim('Modo incremental: sin regresiones detectadas.'));
+    }
+    return null;
+  }
+
+  if (opts.dryRun) {
+    console.log(chalk.yellow('\n--dry-run activo: no se postea review al PR.'));
+    return { recommendation: result.recommendation, findingsCount: result.findings.length };
+  }
+
+  const diffLineMap = buildDiffLineMap(filtered);
+  const event = mapRecommendationToEvent(result.recommendation);
+
+  await githubClient.postReview(ctx, {
+    summary: extractSummaryForPost(result),
+    findings: result.findings,
+    event,
+    inlineComments: config.inlineComments,
+    maxInlineComments: config.maxInlineComments,
+    diffLineMap,
+  });
+
+  console.log(chalk.green(`\n✓ Review incremental posteado en PR #${ctx.pullNumber}`));
+
+  if (result.recommendation === 'request_changes') {
+    process.exitCode = 1;
+  }
+
+  return { recommendation: result.recommendation, findingsCount: result.findings.length };
+}
+
 export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<ReviewPRResult | null> {
   const ctx = getPullRequestContextFromEnv();
   if (!ctx) {
@@ -83,10 +249,31 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   const { config, mergedRulesText, tech, resolvedModel, appCwd } = resolveConfig(opts);
   const formatter = new OutputFormatter();
 
+  const pushShas = getPushEventShasFromEnv();
+  const githubClient = new GitHubClient();
+
+  if (pushShas) {
+    const allComments = await githubClient.getPullRequestReviewComments(ctx.owner, ctx.repo, ctx.pullNumber);
+    const priorFindings = collectPriorOpenFindings(allComments, githubClient);
+
+    if (priorFindings.length > 0) {
+      console.log(chalk.bold(`Revisando PR #${ctx.pullNumber}: ${ctx.title} [modo incremental]`));
+      logHeader(tech, config.provider, resolvedModel, config.language);
+
+      const incrementalResult = await runIncrementalReview({
+        ctx, config, pushShas, priorFindings, githubClient, mergedRulesText, tech, resolvedModel, opts,
+      });
+
+      // false → Compare API error; fall through to full review.
+      // null  → no regressions detected; we are done.
+      // ReviewPRResult → regressions found and review posted; return it.
+      if (incrementalResult !== false) return incrementalResult;
+    }
+  }
+
   console.log(chalk.bold(`Revisando PR #${ctx.pullNumber}: ${ctx.title}`));
   logHeader(tech, config.provider, resolvedModel, config.language);
 
-  const githubClient = new GitHubClient();
   const allFiles = await githubClient.getPullRequestFiles(ctx);
 
   const filteredPaths = ConfigLoader.filterIgnored(

@@ -185,4 +185,99 @@ describe('PromptBuilder', () => {
       expect(result).toContain('Changed files (2)');
     });
   });
+
+  describe('buildIncrementalSystemPrompt', () => {
+    it('should contain the incremental-specific opening instruction', () => {
+      // Arrange
+      const config = makeConfig();
+
+      // Act
+      const result = builder.buildIncrementalSystemPrompt({ config, tech: 'typescript', mergedRulesText: '' });
+
+      // Assert
+      expect(result).toContain('INCREMENTAL re-review');
+    });
+
+    it('should NOT contain the full-review opening sentence', () => {
+      // Arrange
+      const config = makeConfig();
+
+      // Act
+      const result = builder.buildIncrementalSystemPrompt({ config, tech: 'typescript', mergedRulesText: '' });
+
+      // Assert
+      expect(result).not.toContain('detect real bugs, security risks');
+    });
+
+    it('should still include tech stack and severity scale', () => {
+      // Arrange
+      const config = makeConfig({ minSeverity: 'major' });
+
+      // Act
+      const result = builder.buildIncrementalSystemPrompt({ config, tech: 'nestjs', mergedRulesText: '' });
+
+      // Assert
+      expect(result).toContain('NestJS');
+      expect(result).toContain('major');
+    });
+  });
+
+  describe('buildIncrementalUserPrompt', () => {
+    it('should include the prior open findings section', () => {
+      // Arrange
+      const files = [makeFile()];
+      const priorFindings = [
+        { file: 'src/auth.ts', line: 42, severity: 'major', title: 'SQL injection', description: 'User input in query.' },
+      ];
+
+      // Act
+      const result = builder.buildIncrementalUserPrompt({ files, priorFindings });
+
+      // Assert
+      expect(result).toContain('Prior open findings');
+      expect(result).toContain('SQL injection');
+      expect(result).toContain('src/auth.ts');
+    });
+
+    it('should include the new diff section', () => {
+      // Arrange
+      const files = [makeFile({ path: 'src/new-feature.ts' })];
+      const priorFindings = [
+        { file: 'src/foo.ts', line: 1, severity: 'minor', title: 'Missing null check', description: 'Could be null.' },
+      ];
+
+      // Act
+      const result = builder.buildIncrementalUserPrompt({ files, priorFindings });
+
+      // Assert
+      expect(result).toContain('New changes in this push');
+      expect(result).toContain('src/new-feature.ts');
+    });
+
+    it('should truncate large diffs when they exceed maxTotalChars', () => {
+      // Arrange
+      const largePatch = '+' + 'x'.repeat(5000);
+      const files = [makeFile({ patch: largePatch })];
+      const priorFindings = [
+        { file: 'src/foo.ts', line: 1, severity: 'minor', title: 'Example', description: 'Details.' },
+      ];
+
+      // Act
+      const result = builder.buildIncrementalUserPrompt({ files, priorFindings, maxTotalChars: 100 });
+
+      // Assert
+      expect(result).toContain('Diff truncated');
+    });
+
+    it('should show (none) when prior findings list is empty', () => {
+      // Arrange
+      const files = [makeFile()];
+
+      // Act
+      const result = builder.buildIncrementalUserPrompt({ files, priorFindings: [] });
+
+      // Assert
+      expect(result).toContain('_(none)_');
+    });
+  });
 });
