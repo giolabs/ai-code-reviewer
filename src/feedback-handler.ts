@@ -64,7 +64,7 @@ export class FeedbackHandler {
   }
 
   private isBot(actor: string): boolean {
-    return actor === BOT_ACTOR || actor === process.env.GITHUB_ACTOR;
+    return actor === BOT_ACTOR;
   }
 
   private parseSlashCommand(body: string): SlashCommand {
