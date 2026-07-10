@@ -59,7 +59,10 @@ function resolveConfig(opts: ReviewerCliOptions) {
 
   const resolvedModel = config.providerModel ?? config.model;
 
-  const tech = (opts.tech ?? config.tech ?? new TechDetector({ cwd }).detect()) as TechStack;
+  // appDir: subdirectory where package.json lives (monorepos with app not at root)
+  const appCwd = config.appDir ? resolve(cwd, config.appDir) : cwd;
+
+  const tech = (opts.tech ?? config.tech ?? new TechDetector({ cwd: appCwd }).detect()) as TechStack;
 
   const rulesLoader = new RulesLoader({ configLoader });
   const rulesPath = opts.rulesPath ?? config.rules;
@@ -71,7 +74,7 @@ function resolveConfig(opts: ReviewerCliOptions) {
     enabledChecks: config.checks,
   });
 
-  return { config, configLoader, mergedRulesText, tech, resolvedModel, cwd };
+  return { config, configLoader, mergedRulesText, tech, resolvedModel, cwd, appCwd };
 }
 
 function logHeader(tech: string, provider: string, model: string, language: string): void {
@@ -243,7 +246,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     );
   }
 
-  const { config, mergedRulesText, tech, resolvedModel, cwd } = resolveConfig(opts);
+  const { config, mergedRulesText, tech, resolvedModel, appCwd } = resolveConfig(opts);
   const formatter = new OutputFormatter();
 
   const pushShas = getPushEventShasFromEnv();
@@ -290,7 +293,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   console.log(chalk.dim(`Archivos a revisar: ${filtered.length} / ${allFiles.length}`));
 
   console.log(chalk.dim('Analizando grafo de dependencias...'));
-  const indexer = new DependencyGraphIndexer({ cwd, files: filtered, tech });
+  const indexer = new DependencyGraphIndexer({ cwd: appCwd, files: filtered, tech });
   const dependencyIndex = await indexer.build();
   if (!dependencyIndex) {
     console.log(chalk.dim('Grafo de dependencias: stack no soportado o madge falló, se omite.'));

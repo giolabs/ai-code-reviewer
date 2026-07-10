@@ -69,6 +69,13 @@ export interface ReviewerConfig {
   feedback?: FeedbackConfig;
   /** Auto-approve when model recommends approve with no blocking findings (opt-in) */
   autoApprove?: AutoApproveConfig;
+  /**
+   * Subdirectory (relative to repo root) where the app's package.json lives.
+   * Use this in monorepos where the app is not at the repository root.
+   * Affects tech detection and dependency graph analysis.
+   * Example: `appDir: site/app`
+   */
+  appDir?: string;
 }
 
 /**
