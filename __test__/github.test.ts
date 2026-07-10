@@ -7,6 +7,7 @@ import {
   buildFindingMetadata,
   getReviewCommentEventFromEnv,
   getPullRequestContextFromEnv,
+  getPushEventShasFromEnv,
   buildDiffLineMap,
 } from '../src/github.js';
 import type { ChangedFile } from '../src/types.js';
@@ -298,6 +299,145 @@ describe('getPullRequestContextFromEnv', () => {
 
     // Assert
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getPushEventShasFromEnv
+// ---------------------------------------------------------------------------
+
+describe('getPushEventShasFromEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = null;
+    }
+  });
+
+  it('should return null when the event action is not synchronize', () => {
+    // Arrange
+    const payload = { action: 'opened', before: 'aaa', after: 'bbb' };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getPushEventShasFromEnv();
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return null when before or after SHAs are missing from the payload', () => {
+    // Arrange
+    const payload = { action: 'synchronize' };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getPushEventShasFromEnv();
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return before and after SHAs when the synchronize payload is valid', () => {
+    // Arrange
+    const payload = { action: 'synchronize', before: 'abc123', after: 'def456' };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getPushEventShasFromEnv();
+
+    // Assert
+    expect(result).toEqual({ before: 'abc123', after: 'def456' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitHubClient.findBotSummaryCommentId (mocked octokit)
+// ---------------------------------------------------------------------------
+
+describe('GitHubClient.findBotSummaryCommentId', () => {
+  it('should return 0 when no bot summary comment exists', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockListComments = vi.fn().mockResolvedValue({ data: [] });
+    (client as unknown as { octokit: { issues: { listComments: typeof mockListComments } } }).octokit = {
+      issues: { listComments: mockListComments },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.findBotSummaryCommentId('org', 'repo', 1);
+
+    // Assert
+    expect(result).toBe(0);
+  });
+
+  it('should return the comment id when a bot summary comment is found', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockListComments = vi.fn().mockResolvedValue({
+      data: [
+        { id: 10, body: 'Regular comment' },
+        { id: 42, body: '## 🤖 AI Code Review\n\nSome summary' },
+      ],
+    });
+    (client as unknown as { octokit: { issues: { listComments: typeof mockListComments } } }).octokit = {
+      issues: { listComments: mockListComments },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.findBotSummaryCommentId('org', 'repo', 1);
+
+    // Assert
+    expect(result).toBe(42);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitHubClient.getCompareFiles (mocked octokit)
+// ---------------------------------------------------------------------------
+
+describe('GitHubClient.getCompareFiles', () => {
+  it('should return an empty array when the compare response has no files', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockCompare = vi.fn().mockResolvedValue({ data: {} });
+    (client as unknown as { octokit: { repos: { compareCommitsWithBasehead: typeof mockCompare } } }).octokit = {
+      repos: { compareCommitsWithBasehead: mockCompare },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.getCompareFiles('org', 'repo', 'abc', 'def');
+
+    // Assert
+    expect(result).toEqual([]);
+  });
+
+  it('should return mapped ChangedFile array for a valid compare response', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockCompare = vi.fn().mockResolvedValue({
+      data: {
+        files: [
+          { filename: 'src/auth.ts', status: 'modified', patch: '@@ -1,1 +1,2 @@\n+new line', additions: 1, deletions: 0 },
+          { filename: 'src/utils.ts', status: 'added', patch: undefined, additions: 5, deletions: 0 },
+        ],
+      },
+    });
+    (client as unknown as { octokit: { repos: { compareCommitsWithBasehead: typeof mockCompare } } }).octokit = {
+      repos: { compareCommitsWithBasehead: mockCompare },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.getCompareFiles('org', 'repo', 'abc', 'def');
+
+    // Assert
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ path: 'src/auth.ts', status: 'modified', additions: 1, deletions: 0 });
+    expect(result[1]).toMatchObject({ path: 'src/utils.ts', status: 'added', additions: 5, deletions: 0 });
   });
 });
 
