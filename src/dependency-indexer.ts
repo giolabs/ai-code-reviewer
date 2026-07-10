@@ -16,6 +16,12 @@ interface DependencyGraph {
   importers: Record<string, string[]>;
 }
 
+export type IndexBuildResult =
+  | { status: 'ok'; index: string }
+  | { status: 'unsupported' }
+  | { status: 'timeout' }
+  | { status: 'error'; detail: string };
+
 const SUPPORTED_STACKS: ReadonlyArray<TechStack> = [
   'typescript',
   'nextjs',
@@ -28,17 +34,23 @@ const MAX_INDEX_CHARS = 8_000;
 const MADGE_TIMEOUT_MS = 10_000;
 
 export class DependencyGraphIndexer {
+  private madgeError: string | null = null;
+
   constructor(private readonly options: DependencyGraphIndexerOptions) {}
 
-  async build(): Promise<string | null> {
-    if (!SUPPORTED_STACKS.includes(this.options.tech)) return null;
-    if (this.options.files.length === 0) return null;
+  async build(): Promise<IndexBuildResult> {
+    if (!SUPPORTED_STACKS.includes(this.options.tech)) return { status: 'unsupported' };
+    if (this.options.files.length === 0) return { status: 'unsupported' };
 
-    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), MADGE_TIMEOUT_MS));
+    const timeout = new Promise<null>((res) => setTimeout(() => res(null), MADGE_TIMEOUT_MS));
     const graph = await Promise.race([this.runMadge(), timeout]);
-    if (!graph) return null;
 
-    return this.formatIndex(graph);
+    if (!graph) {
+      if (this.madgeError) return { status: 'error', detail: this.madgeError };
+      return { status: 'timeout' };
+    }
+
+    return { status: 'ok', index: this.formatIndex(graph) };
   }
 
   private async runMadge(): Promise<DependencyGraph | null> {
@@ -79,7 +91,8 @@ export class DependencyGraphIndexer {
       }
 
       return { imports, importers };
-    } catch {
+    } catch (err) {
+      this.madgeError = err instanceof Error ? err.message : String(err);
       return null;
     }
   }

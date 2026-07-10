@@ -294,16 +294,24 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
 
   console.log(chalk.dim('Analizando grafo de dependencias...'));
   const indexer = new DependencyGraphIndexer({ cwd: appCwd, files: filtered, tech });
-  const dependencyIndex = await indexer.build();
-  if (!dependencyIndex) {
-    console.log(chalk.dim('Grafo de dependencias: stack no soportado o madge falló, se omite.'));
-  } else {
+  const buildResult = await indexer.build();
+
+  let dependencyIndex: string | undefined;
+  if (buildResult.status === 'ok') {
+    dependencyIndex = buildResult.index;
     const edgeCount =
       (dependencyIndex.match(/→/g) ?? []).length + (dependencyIndex.match(/←/g) ?? []).length;
     console.log(chalk.dim(`Grafo listo: ${filtered.length} archivos, ${edgeCount} relaciones.`));
     if (dependencyIndex.endsWith('...(truncated)')) {
       console.log(chalk.dim('Grafo truncado a 8.000 caracteres.'));
     }
+  } else if (buildResult.status === 'unsupported') {
+    console.log(chalk.dim(`Grafo de dependencias: stack "${TechDetector.displayName(tech)}" no soportado, se omite.`));
+  } else if (buildResult.status === 'timeout') {
+    console.log(chalk.dim('Grafo de dependencias: madge timeout, se omite.'));
+  } else {
+    console.log(chalk.dim(`Grafo de dependencias: madge falló, se omite.`));
+    if (process.env.DEBUG) console.error(chalk.dim(`[DEBUG] madge: ${buildResult.detail}`));
   }
 
   const result = await callLLM({
@@ -314,7 +322,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     mergedRulesText,
     tech,
     resolvedModel,
-    dependencyIndex: dependencyIndex ?? undefined,
+    dependencyIndex,
   });
 
   result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
