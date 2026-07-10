@@ -235,3 +235,24 @@ export interface PullRequestContext {
   /** PR body */
   body: string | null;
 }
+
+/**
+ * SHAs from a GitHub Actions `synchronize` event payload.
+ * Used to fetch the incremental diff between the previous and current PR HEAD.
+ */
+export interface PushEventShas {
+  before: string;
+  after: string;
+}
+
+/**
+ * A prior open finding from a previous bot review, used as context
+ * for incremental re-review prompts.
+ */
+export interface PriorFinding {
+  file: string;
+  line: number;
+  severity: string;
+  title: string;
+  description: string;
+}

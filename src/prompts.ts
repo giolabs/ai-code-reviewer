@@ -1,4 +1,4 @@
-import type { ChangedFile, ReviewerConfig, TechStack, ExplainPromptOptions } from './types.js';
+import type { ChangedFile, ReviewerConfig, TechStack, ExplainPromptOptions, PriorFinding } from './types.js';
 import { TechDetector } from './tech-detect.js';
 
 interface SystemPromptArgs {
@@ -12,6 +12,13 @@ interface UserPromptArgs {
   files: ReadonlyArray<ChangedFile>;
   prTitle?: string;
   prBody?: string | null;
+  maxTotalChars?: number;
+}
+
+interface IncrementalUserPromptArgs {
+  files: ReadonlyArray<ChangedFile>;
+  priorFindings: ReadonlyArray<PriorFinding>;
+  prTitle?: string;
   maxTotalChars?: number;
 }
 
@@ -126,6 +133,118 @@ ${langInstruction}`,
     parts.push(fileChunks.join('\n\n'));
     parts.push(
       `\nReview the changes following the rules and instructions in the system prompt. Return the response in the required JSON format.`,
+    );
+
+    return parts.join('\n\n');
+  }
+
+  buildIncrementalSystemPrompt(args: SystemPromptArgs): string {
+    const { config, tech, mergedRulesText } = args;
+
+    const enabledChecks = Object.entries(config.checks)
+      .filter(([, on]) => on)
+      .map(([k]) => k)
+      .join(', ');
+
+    const langInstruction =
+      config.language === 'es'
+        ? 'Respondé SIEMPRE en español rioplatense, claro y profesional.'
+        : 'Always respond in clear, professional English.';
+
+    const sections = [
+      `You are performing an INCREMENTAL re-review of a pull request. Your role is to check whether the new push introduces regressions or critical/major issues specifically in the context of the prior open findings listed in the user prompt. Do NOT report issues unrelated to the prior findings unless they are critical or major. Do NOT re-report prior findings — assume they are already tracked.`,
+
+      `**Project stack:** ${TechDetector.displayName(tech)}`,
+
+      `**Enabled check categories:** ${enabledChecks}
+Ignore disabled categories. If a check is off, do NOT generate findings for that category even if you spot them.`,
+
+      `**Minimum severity to report:** ${config.minSeverity}
+Scale (highest to lowest): critical > major > minor > info > nitpick.
+- critical: bug that breaks production, exploitable vulnerability, data loss.
+- major: likely bug, security issue without a direct exploit, serious performance problem.
+- minor: relevant code smell, unhandled edge case, missing error handling.
+- info: useful observation, optional improvement.
+- nitpick: style, naming, micro-optimization.
+Do NOT report findings below the minimum severity.`,
+
+      `**Review rules (merged: project > global):**
+${mergedRulesText || '(no rules — apply general best practices)'}`,
+    ];
+
+    if (args.dependencyIndex) {
+      sections.push(args.dependencyIndex);
+    }
+
+    if (config.customInstructions) {
+      sections.push(`**Additional user instructions:**\n${config.customInstructions}`);
+    }
+
+    sections.push(
+      `**How to reference lines:**
+- The \`line\` field must be the line number in the NEW file (right side of the diff).
+- Only reference lines that are in the diff (lines starting with + in the patch, or immediate context). Inline comments only work there.
+- If the issue is about the file in general (not a specific line), use the first changed line of the file and clarify it in the description.`,
+
+      `**Quality over quantity:**
+- If the new push looks clean with respect to prior findings and general quality, return an empty findings array and set recommendation to 'comment'.
+- Every finding must have a concrete rationale, not vague statements like "could be improved".
+
+${langInstruction}`,
+    );
+
+    return sections.join('\n\n');
+  }
+
+  buildIncrementalUserPrompt(args: IncrementalUserPromptArgs): string {
+    const { files, priorFindings, prTitle, maxTotalChars = 80_000 } = args;
+
+    const parts: string[] = [];
+
+    if (prTitle) {
+      parts.push(`**PR title:** ${prTitle}`);
+    }
+
+    parts.push(`**Prior open findings from previous review (${priorFindings.length}):**`);
+    if (priorFindings.length === 0) {
+      parts.push('_(none)_');
+    } else {
+      priorFindings.forEach((f, i) => {
+        const desc = f.description.slice(0, 300).replace(/\n/g, ' ');
+        parts.push(
+          `${i + 1}. [${f.severity.toUpperCase()}] \`${f.file}:${f.line}\` — ${f.title}\n   ${desc}`,
+        );
+      });
+    }
+
+    parts.push(`**New changes in this push (${files.length} file(s)):**`);
+
+    let totalChars = parts.join('\n\n').length;
+    const fileChunks: string[] = [];
+
+    for (const file of files) {
+      if (!file.patch) {
+        fileChunks.push(`### ${file.path} (${file.status}, no patch available)`);
+        continue;
+      }
+
+      const header = `### ${file.path} (${file.status}, +${file.additions}/-${file.deletions})`;
+      const chunk = `${header}\n\`\`\`diff\n${file.patch}\n\`\`\``;
+
+      if (totalChars + chunk.length > maxTotalChars) {
+        fileChunks.push(
+          `### ${file.path} (${file.status})\n_[Diff truncated — exceeded the maximum prompt size.]_`,
+        );
+        totalChars += 120;
+      } else {
+        fileChunks.push(chunk);
+        totalChars += chunk.length;
+      }
+    }
+
+    parts.push(fileChunks.join('\n\n'));
+    parts.push(
+      `Review only the new changes. Flag regressions or new critical/major issues specifically related to the prior findings above. If the new changes partially or fully address a prior finding, do NOT re-flag it. Return the response in the required JSON format.`,
     );
 
     return parts.join('\n\n');

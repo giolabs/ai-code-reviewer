@@ -8,6 +8,7 @@ import type {
   ReviewFinding,
   FindingMetadata,
   FindingStatus,
+  PushEventShas,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -414,6 +415,51 @@ export class GitHubClient {
       throw err;
     }
   }
+
+  async getCompareFiles(
+    owner: string,
+    repo: string,
+    base: string,
+    head: string,
+  ): Promise<ChangedFile[]> {
+    const response = await this.octokit.repos.compareCommitsWithBasehead({
+      owner,
+      repo,
+      basehead: `${base}...${head}`,
+    });
+    if (!response.data.files) return [];
+    return response.data.files.map((f) => ({
+      path: f.filename,
+      status: normalizeStatus(f.status),
+      patch: f.patch,
+      additions: f.additions,
+      deletions: f.deletions,
+    }));
+  }
+
+  async findBotSummaryCommentId(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<number> {
+    try {
+      const { data } = await this.octokit.issues.listComments({
+        owner,
+        repo,
+        issue_number: pullNumber,
+        per_page: 100,
+      });
+      for (let i = data.length - 1; i >= 0; i--) {
+        const comment = data[i];
+        if (comment?.body?.includes('## 🤖 AI Code Review')) {
+          return comment.id;
+        }
+      }
+      return 0;
+    } catch {
+      return 0;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +484,34 @@ export interface PrReview {
 // ---------------------------------------------------------------------------
 // Standalone helpers (kept for backward compat and module-level use)
 // ---------------------------------------------------------------------------
+
+/**
+ * Reads the `before`/`after` SHAs from a GitHub Actions `synchronize` event.
+ * Returns null for any other event type or when the payload is missing.
+ */
+export function getPushEventShasFromEnv(): PushEventShas | null {
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath || !existsSync(eventPath)) return null;
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(eventPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+
+  if (typeof raw !== 'object' || raw === null) return null;
+  const ev = raw as Record<string, unknown>;
+
+  if (ev.action !== 'synchronize') return null;
+
+  const before = typeof ev.before === 'string' ? ev.before : '';
+  const after = typeof ev.after === 'string' ? ev.after : '';
+
+  if (!before || !after) return null;
+
+  return { before, after };
+}
 
 /**
  * Reads PR context from the environment variables injected by GitHub Actions.
