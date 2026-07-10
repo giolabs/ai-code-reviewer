@@ -96,6 +96,8 @@ function makeGitHubClientMock() {
     extractFindingMetadata: vi.fn().mockReturnValue(null),
     listPullRequestReviews: vi.fn().mockResolvedValue([]),
     dismissReview: vi.fn().mockResolvedValue(undefined),
+    findContextComment: vi.fn().mockResolvedValue(null),
+    createContextComment: vi.fn().mockResolvedValue(undefined),
   };
 }
 

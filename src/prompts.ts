@@ -1,4 +1,4 @@
-import type { ChangedFile, ReviewerConfig, TechStack, ExplainPromptOptions, PriorFinding } from './types.js';
+import type { ChangedFile, ReviewerConfig, TechStack, ExplainPromptOptions, PriorFinding, FeedbackEvaluationPromptArgs } from './types.js';
 import { TechDetector } from './tech-detect.js';
 
 interface SystemPromptArgs {
@@ -248,6 +248,43 @@ ${langInstruction}`,
     );
 
     return parts.join('\n\n');
+  }
+
+  buildFeedbackEvaluationPrompt(args: FeedbackEvaluationPromptArgs): string {
+    const { findingTitle, findingDescription, findingSeverity, findingFile, findingLine, devReply, fileWindow, language } = args;
+
+    const langInstruction =
+      language === 'es'
+        ? 'Respondé SIEMPRE en español rioplatense, claro y respetuoso.'
+        : 'Always respond in clear, respectful English.';
+
+    const jsonInstruction =
+      language === 'es'
+        ? 'Devolvé ÚNICAMENTE un objeto JSON con la estructura exacta: {"decision": "resolved" | "maintained", "reply": "<tu respuesta al hilo>"}'
+        : 'Return ONLY a JSON object with the exact structure: {"decision": "resolved" | "maintained", "reply": "<your thread reply>"}';
+
+    return [
+      `You are a Senior Staff Engineer reviewing whether a code review finding is still valid after the developer replied.`,
+      ``,
+      `**Finding:**`,
+      `- File: \`${findingFile}\` (line ${findingLine})`,
+      `- Severity: ${findingSeverity}`,
+      `- Title: ${findingTitle}`,
+      `- Description: ${findingDescription}`,
+      ``,
+      `**Developer's reply:**`,
+      devReply,
+      ``,
+      `**Current file state around line ${findingLine}:**`,
+      `\`\`\``,
+      fileWindow,
+      `\`\`\``,
+      ``,
+      `Evaluate: if the finding is genuinely fixed or the developer's argument shows it does not apply, set decision to "resolved". If the finding still applies, set decision to "maintained".`,
+      `Write a short, respectful reply (2-4 sentences) to post in the thread explaining your decision.`,
+      langInstruction,
+      jsonInstruction,
+    ].join('\n');
   }
 
   buildExplainPrompt(options: ExplainPromptOptions): string {

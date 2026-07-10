@@ -202,7 +202,7 @@ describe('getReviewCommentEventFromEnv', () => {
     const result = getReviewCommentEventFromEnv();
 
     // Assert
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       actor: 'dev-user',
       commentId: 200,
       commentBody: '/explain',
@@ -442,6 +442,109 @@ describe('GitHubClient.getCompareFiles', () => {
 });
 
 // ---------------------------------------------------------------------------
+// GitHubClient.findContextComment
+// ---------------------------------------------------------------------------
+
+describe('GitHubClient.findContextComment', () => {
+  it('should return null when no context comment exists', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockListComments = vi.fn().mockResolvedValue({
+      data: [
+        { id: 1, body: 'Regular comment' },
+        { id: 2, body: '## 🤖 AI Code Review\n\nSome summary' },
+      ],
+    });
+    (client as unknown as { octokit: { issues: { listComments: typeof mockListComments } } }).octokit = {
+      issues: { listComments: mockListComments },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.findContextComment({ owner: 'org', repo: 'repo', pullNumber: 1 });
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return the comment body when context marker is found', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const contextBody = '_🤖 Contexto del proyecto — generado automáticamente._\n<!-- ai-review-context:{"tech":"nextjs","reviewerVersion":"1.0.0","detectedAt":"2026-01-01T00:00:00.000Z"} -->';
+    const mockListComments = vi.fn().mockResolvedValue({
+      data: [
+        { id: 1, body: 'Regular comment' },
+        { id: 2, body: contextBody },
+      ],
+    });
+    (client as unknown as { octokit: { issues: { listComments: typeof mockListComments } } }).octokit = {
+      issues: { listComments: mockListComments },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.findContextComment({ owner: 'org', repo: 'repo', pullNumber: 1 });
+
+    // Assert
+    expect(result).toBe(contextBody);
+  });
+
+  it('should return null on API error', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockListComments = vi.fn().mockRejectedValue(new Error('API error'));
+    (client as unknown as { octokit: { issues: { listComments: typeof mockListComments } } }).octokit = {
+      issues: { listComments: mockListComments },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.findContextComment({ owner: 'org', repo: 'repo', pullNumber: 1 });
+
+    // Assert
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitHubClient.createContextComment
+// ---------------------------------------------------------------------------
+
+describe('GitHubClient.createContextComment', () => {
+  it('should call issues.createComment with correct args', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockCreateComment = vi.fn().mockResolvedValue({ data: { id: 99 } });
+    (client as unknown as { octokit: { issues: { createComment: typeof mockCreateComment } } }).octokit = {
+      issues: { createComment: mockCreateComment },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+    const body = '_🤖 Contexto del proyecto._\n<!-- ai-review-context:{"tech":"react"} -->';
+
+    // Act
+    await client.createContextComment({ owner: 'org', repo: 'repo', pullNumber: 5, body });
+
+    // Assert
+    expect(mockCreateComment).toHaveBeenCalledWith({
+      owner: 'org',
+      repo: 'repo',
+      issue_number: 5,
+      body,
+    });
+  });
+
+  it('should not throw when API call fails', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockCreateComment = vi.fn().mockRejectedValue(new Error('Network error'));
+    (client as unknown as { octokit: { issues: { createComment: typeof mockCreateComment } } }).octokit = {
+      issues: { createComment: mockCreateComment },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act & Assert
+    await expect(
+      client.createContextComment({ owner: 'org', repo: 'repo', pullNumber: 1, body: 'context' }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildDiffLineMap
 // ---------------------------------------------------------------------------
 
@@ -501,5 +604,109 @@ describe('buildDiffLineMap', () => {
     // Assert
     expect(result.get('src/a.ts')).toEqual(new Set([2]));
     expect(result.get('src/b.ts')).toEqual(new Set([1]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitHubClient.getFileAtRef
+// ---------------------------------------------------------------------------
+
+describe('GitHubClient.getFileAtRef', () => {
+  it('should return decoded file content on success', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const rawContent = Buffer.from('const x = 1;\n').toString('base64');
+    const mockGetContent = vi.fn().mockResolvedValue({
+      data: { type: 'file', content: rawContent },
+    });
+    (client as unknown as { octokit: { repos: { getContent: typeof mockGetContent } } }).octokit = {
+      repos: { getContent: mockGetContent },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.getFileAtRef({ owner: 'org', repo: 'repo', path: 'src/auth.ts', ref: 'abc123' });
+
+    // Assert
+    expect(result).toBe('const x = 1;\n');
+  });
+
+  it('should return null when the response is a directory (array)', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockGetContent = vi.fn().mockResolvedValue({ data: [] });
+    (client as unknown as { octokit: { repos: { getContent: typeof mockGetContent } } }).octokit = {
+      repos: { getContent: mockGetContent },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.getFileAtRef({ owner: 'org', repo: 'repo', path: 'src/', ref: 'abc' });
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return null on API error', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake' });
+    const mockGetContent = vi.fn().mockRejectedValue(new Error('404 Not Found'));
+    (client as unknown as { octokit: { repos: { getContent: typeof mockGetContent } } }).octokit = {
+      repos: { getContent: mockGetContent },
+    } as unknown as typeof client['octokit' extends keyof typeof client ? 'octokit' : never];
+
+    // Act
+    const result = await client.getFileAtRef({ owner: 'org', repo: 'repo', path: 'missing.ts', ref: 'abc' });
+
+    // Assert
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getReviewCommentEventFromEnv — headSha
+// ---------------------------------------------------------------------------
+
+describe('getReviewCommentEventFromEnv headSha', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = null;
+    }
+  });
+
+  it('should include headSha from pull_request.head.sha', () => {
+    // Arrange
+    const payload = {
+      comment: { id: 200, body: 'text', in_reply_to_id: 100 },
+      pull_request: { number: 5, head: { sha: 'deadbeef' } },
+      sender: { login: 'dev' },
+    };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'my-org/my-repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getReviewCommentEventFromEnv();
+
+    // Assert
+    expect(result?.headSha).toBe('deadbeef');
+  });
+
+  it('should default headSha to empty string when pull_request.head is absent', () => {
+    // Arrange
+    const payload = {
+      comment: { id: 201, body: 'text', in_reply_to_id: null },
+      pull_request: { number: 6 },
+      sender: { login: 'dev' },
+    };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'my-org/my-repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getReviewCommentEventFromEnv();
+
+    // Assert
+    expect(result?.headSha).toBe('');
   });
 });

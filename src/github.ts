@@ -149,6 +149,30 @@ export class GitHubClient {
     }
   }
 
+  async getFileAtRef(args: {
+    owner: string;
+    repo: string;
+    path: string;
+    ref: string;
+  }): Promise<string | null> {
+    try {
+      const response = await this.octokit.repos.getContent({
+        owner: args.owner,
+        repo: args.repo,
+        path: args.path,
+        ref: args.ref,
+      });
+
+      if (Array.isArray(response.data)) return null;
+      if (response.data.type !== 'file') return null;
+      if (!('content' in response.data)) return null;
+
+      return Buffer.from(response.data.content, 'base64').toString('utf-8');
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Posts a review on the PR with a summary and inline comments.
    * Returns the created review ID (used as the summary comment ID for later edits).
@@ -460,6 +484,49 @@ export class GitHubClient {
       return 0;
     }
   }
+
+  async findContextComment(args: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+  }): Promise<string | null> {
+    try {
+      const { data } = await this.octokit.issues.listComments({
+        owner: args.owner,
+        repo: args.repo,
+        issue_number: args.pullNumber,
+        per_page: 100,
+      });
+      for (let i = data.length - 1; i >= 0; i--) {
+        const comment = data[i];
+        if (comment?.body?.includes('<!-- ai-review-context:')) {
+          return comment.body;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async createContextComment(args: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    body: string;
+  }): Promise<void> {
+    try {
+      await this.octokit.issues.createComment({
+        owner: args.owner,
+        repo: args.repo,
+        issue_number: args.pullNumber,
+        body: args.body,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[warn] No se pudo guardar el contexto del proyecto:', msg);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -565,6 +632,7 @@ export function getReviewCommentEventFromEnv(): {
   pullNumber: number;
   owner: string;
   repo: string;
+  headSha: string;
 } | null {
   const repository = process.env.GITHUB_REPOSITORY;
   const eventPath = process.env.GITHUB_EVENT_PATH;
@@ -590,6 +658,8 @@ export function getReviewCommentEventFromEnv(): {
 
   if (!comment || !pr) return null;
 
+  const head = pr.head as Record<string, unknown> | undefined;
+
   return {
     actor: (sender?.login as string) ?? '',
     commentId: comment.id as number,
@@ -598,6 +668,7 @@ export function getReviewCommentEventFromEnv(): {
     pullNumber: pr.number as number,
     owner,
     repo,
+    headSha: (head?.sha as string) ?? '',
   };
 }
 

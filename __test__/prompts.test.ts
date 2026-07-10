@@ -280,4 +280,88 @@ describe('PromptBuilder', () => {
       expect(result).toContain('_(none)_');
     });
   });
+
+  describe('buildFeedbackEvaluationPrompt', () => {
+    it('should include the finding title, file, and line in the prompt', () => {
+      // Arrange
+      const args = {
+        findingTitle: 'Missing JWT signature check',
+        findingDescription: 'The token is not verified before use.',
+        findingSeverity: 'major',
+        findingFile: 'src/auth.ts',
+        findingLine: 42,
+        devReply: 'I added verification in the previous commit.',
+        fileWindow: 'const verify = true;',
+        language: 'es' as const,
+      };
+
+      // Act
+      const result = builder.buildFeedbackEvaluationPrompt(args);
+
+      // Assert
+      expect(result).toContain('Missing JWT signature check');
+      expect(result).toContain('src/auth.ts');
+      expect(result).toContain('42');
+    });
+
+    it('should include the developer reply verbatim', () => {
+      // Arrange
+      const args = {
+        findingTitle: 'Some finding',
+        findingDescription: 'Description here.',
+        findingSeverity: 'minor',
+        findingFile: 'src/util.ts',
+        findingLine: 10,
+        devReply: 'I fixed this in commit abc123.',
+        fileWindow: '',
+        language: 'es' as const,
+      };
+
+      // Act
+      const result = builder.buildFeedbackEvaluationPrompt(args);
+
+      // Assert
+      expect(result).toContain('I fixed this in commit abc123.');
+    });
+
+    it('should include the file window content', () => {
+      // Arrange
+      const args = {
+        findingTitle: 'Title',
+        findingDescription: 'Desc',
+        findingSeverity: 'info',
+        findingFile: 'src/x.ts',
+        findingLine: 5,
+        devReply: 'reply',
+        fileWindow: 'const answer = 42;',
+        language: 'en' as const,
+      };
+
+      // Act
+      const result = builder.buildFeedbackEvaluationPrompt(args);
+
+      // Assert
+      expect(result).toContain('const answer = 42;');
+    });
+
+    it('should include Spanish language instruction when language is es', () => {
+      // Arrange
+      const args = {
+        findingTitle: 'T',
+        findingDescription: 'D',
+        findingSeverity: 'info',
+        findingFile: 'f.ts',
+        findingLine: 1,
+        devReply: 'r',
+        fileWindow: '',
+        language: 'es' as const,
+      };
+
+      // Act
+      const result = builder.buildFeedbackEvaluationPrompt(args);
+
+      // Assert
+      expect(result).toContain('español');
+    });
+  });
 });

@@ -193,6 +193,24 @@ export interface AutoApproveConfig {
   minScore: number;
 }
 
+export type FeedbackEvaluationDecision = 'resolved' | 'maintained';
+
+export interface FeedbackEvaluationResult {
+  decision: FeedbackEvaluationDecision;
+  reply: string;
+}
+
+export interface FeedbackEvaluationPromptArgs {
+  findingTitle: string;
+  findingDescription: string;
+  findingSeverity: string;
+  findingFile: string;
+  findingLine: number;
+  devReply: string;
+  fileWindow: string;
+  language: 'es' | 'en';
+}
+
 export interface FeedbackEvent {
   /** GitHub login of the person who replied */
   actor: string;
@@ -204,6 +222,8 @@ export interface FeedbackEvent {
   pullNumber: number;
   repo: string;
   owner: string;
+  /** SHA of the PR's HEAD commit at the time of the reply event */
+  headSha?: string;
 }
 
 export interface ResolveFixedOptions {
@@ -250,6 +270,21 @@ export interface PullRequestContext {
 export interface PushEventShas {
   before: string;
   after: string;
+}
+
+/**
+ * Project context cached in a hidden PR comment after the first full review.
+ * Used by subsequent reviews to skip TechDetector re-detection.
+ */
+export interface ProjectContext {
+  /** Tech stack detected on first review */
+  tech: TechStack;
+  /** Value of config.appDir at detection time, or undefined if not set */
+  appDir: string | undefined;
+  /** Reviewer package version that wrote this context */
+  reviewerVersion: string;
+  /** ISO 8601 timestamp of detection */
+  detectedAt: string;
 }
 
 /**

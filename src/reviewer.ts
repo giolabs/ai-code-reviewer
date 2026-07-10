@@ -18,6 +18,7 @@ import {
 } from './github.js';
 import type { PrReview, PrReviewComment } from './github.js';
 import { ThreadResolver } from './thread-resolver.js';
+import { ProjectContextStore, REVIEWER_VERSION } from './project-context.js';
 import type {
   ChangedFile,
   ReviewerConfig,
@@ -26,6 +27,7 @@ import type {
   PullRequestContext,
   PushEventShas,
   PriorFinding,
+  ProjectContext,
 } from './types.js';
 import { FindingStatus } from './types.js';
 import type { LLMConfig } from './llm/types.js';
@@ -246,11 +248,37 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     );
   }
 
-  const { config, mergedRulesText, tech, resolvedModel, appCwd } = resolveConfig(opts);
+  const { config, mergedRulesText, tech: detectedTech, resolvedModel, appCwd } = resolveConfig(opts);
   const formatter = new OutputFormatter();
 
   const pushShas = getPushEventShasFromEnv();
   const githubClient = new GitHubClient();
+
+  // Project context graph: read cached tech stack from hidden PR comment.
+  // Skip if config.tech is explicitly set (explicit config always wins).
+  const contextStore = new ProjectContextStore();
+  let foundContextBody: string | null = null;
+  let tech: TechStack = detectedTech;
+
+  if (!config.tech) {
+    foundContextBody = await githubClient.findContextComment({
+      owner: ctx.owner,
+      repo: ctx.repo,
+      pullNumber: ctx.pullNumber,
+    });
+    if (foundContextBody !== null) {
+      const cachedContext = contextStore.deserialize(foundContextBody);
+      if (cachedContext !== null && !contextStore.shouldInvalidate(cachedContext)) {
+        tech = cachedContext.tech;
+        console.log(chalk.dim(`✓ Tech stack leído del contexto del proyecto: ${tech}.`));
+      } else {
+        if (cachedContext !== null) {
+          console.log(chalk.yellow('⚠ Versión del reviewer cambió — re-detectando stack del proyecto.'));
+        }
+        foundContextBody = null;
+      }
+    }
+  }
 
   if (pushShas) {
     const allComments = await githubClient.getPullRequestReviewComments(ctx.owner, ctx.repo, ctx.pullNumber);
@@ -372,6 +400,23 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   });
 
   console.log(chalk.green(`\n✓ Review posteado en PR #${ctx.pullNumber}`));
+
+  // Write context graph after first full review (when no prior context existed).
+  if (foundContextBody === null) {
+    const contextToSave: ProjectContext = {
+      tech,
+      appDir: config.appDir,
+      reviewerVersion: REVIEWER_VERSION,
+      detectedAt: new Date().toISOString(),
+    };
+    await githubClient.createContextComment({
+      owner: ctx.owner,
+      repo: ctx.repo,
+      pullNumber: ctx.pullNumber,
+      body: contextStore.serialize(contextToSave),
+    });
+    console.log(chalk.dim(`✓ Contexto del proyecto guardado (tech: ${tech}).`));
+  }
 
   if (result.recommendation === 'request_changes') {
     process.exitCode = 1;

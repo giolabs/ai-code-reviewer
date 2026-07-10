@@ -1,6 +1,7 @@
+import chalk from 'chalk';
 import type { GitHubClient } from './github.js';
 import { PromptBuilder } from './prompts.js';
-import type { FeedbackConfig, FeedbackEvent, FindingMetadata, ReviewerConfig } from './types.js';
+import type { FeedbackConfig, FeedbackEvent, FeedbackEvaluationResult, FindingMetadata, ReviewerConfig } from './types.js';
 import { FindingStatus, SlashCommand } from './types.js';
 
 const BOT_ACTOR = 'github-actions[bot]';
@@ -29,7 +30,10 @@ export class FeedbackHandler {
     if (this.isBot(event.actor)) return;
 
     const command = this.parseSlashCommand(event.commentBody);
-    if (command === SlashCommand.Unknown) return;
+    if (command === SlashCommand.Unknown) {
+      await this.handleFeedbackEvaluation(event);
+      return;
+    }
 
     if (event.inReplyToId === null) return;
 
@@ -138,6 +142,93 @@ export class FeedbackHandler {
     }
 
     await this.postReply(event, this.dismissalMessage(event.actor));
+  }
+
+  private async handleFeedbackEvaluation(event: FeedbackEvent): Promise<void> {
+    if (event.inReplyToId === null) return;
+
+    const parentComment = await this.githubClient.getReviewComment(
+      event.owner,
+      event.repo,
+      event.inReplyToId,
+    );
+    if (!parentComment) return;
+
+    const metadata = this.githubClient.extractFindingMetadata(parentComment.body);
+    if (!metadata) return;
+
+    const fileContent = await this.githubClient.getFileAtRef({
+      owner: event.owner,
+      repo: event.repo,
+      path: metadata.file,
+      ref: event.headSha ?? 'HEAD',
+    });
+
+    const fileWindow = this.extractLineWindow(fileContent, metadata.line);
+
+    const findingText = this.extractFindingTextFromBody(parentComment.body);
+
+    const prompt = this.promptBuilder.buildFeedbackEvaluationPrompt({
+      findingTitle: findingText.title,
+      findingDescription: findingText.description,
+      findingSeverity: metadata.severity,
+      findingFile: metadata.file,
+      findingLine: metadata.line,
+      devReply: event.commentBody,
+      fileWindow,
+      language: this.config.language,
+    });
+
+    let result: FeedbackEvaluationResult;
+    try {
+      const raw = await this.llmCall(prompt);
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof parsed.decision !== 'string' || typeof parsed.reply !== 'string') {
+        throw new Error('Invalid LLM response shape');
+      }
+      result = { decision: parsed.decision as FeedbackEvaluationResult['decision'], reply: parsed.reply };
+    } catch {
+      return;
+    }
+
+    await this.postReply(event, result.reply);
+
+    if (result.decision === 'resolved') {
+      const updatedMetadata: FindingMetadata = { ...metadata, status: FindingStatus.Resolved };
+      const updatedBody = this.githubClient.embedFindingMetadata(parentComment.body, updatedMetadata);
+      await this.githubClient.editComment({
+        owner: event.owner,
+        repo: event.repo,
+        commentId: event.inReplyToId,
+        body: updatedBody,
+        isPrReviewComment: true,
+      });
+      if (metadata.threadNodeId) {
+        await this.githubClient.resolveThread({ threadNodeId: metadata.threadNodeId });
+      }
+    }
+
+    console.log(chalk.dim(`Evaluación de feedback: ${result.decision}`));
+  }
+
+  private extractLineWindow(fileContent: string | null, line: number): string {
+    if (!fileContent) return '';
+    const lines = fileContent.split('\n');
+    const start = Math.max(0, line - 51);
+    const end = Math.min(lines.length, line + 50);
+    const window = lines.slice(start, end).join('\n');
+    return window.slice(0, 3000);
+  }
+
+  private extractFindingTextFromBody(commentBody: string): { title: string; description: string } {
+    const markerIndex = commentBody.indexOf('<!-- ai-review-finding:');
+    const text = markerIndex === -1 ? commentBody : commentBody.slice(0, markerIndex);
+    const trimmed = text.trim();
+    const lineBreak = trimmed.indexOf('\n');
+    if (lineBreak === -1) return { title: trimmed, description: '' };
+    const title = trimmed.slice(0, lineBreak).trim();
+    const description = trimmed.slice(lineBreak).trim().slice(0, 500);
+    return { title, description };
   }
 
   private async postReply(event: FeedbackEvent, body: string): Promise<void> {

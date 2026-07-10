@@ -36,6 +36,7 @@ export async function handleFeedback(): Promise<void> {
     pullNumber: rawEvent.pullNumber,
     repo: rawEvent.repo,
     owner: rawEvent.owner,
+    headSha: rawEvent.headSha,
   };
 
   const githubClient = new GitHubClient();
