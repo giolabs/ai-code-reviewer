@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.0-beta.10
+
+- **`@botai` command system**: replaces `/explain` and `/dismiss` with structured `@botai approved | review | resolved` commands in inline PR comment threads.
+  - `@botai approved` — post a reply and submit a GitHub APPROVE review.
+  - `@botai review """text"""` — evaluate whether `text` addresses the finding via LLM; always replies with the decision; resolves thread if resolved.
+  - `@botai resolved` — immediately close the thread; auto-approves the PR when all bot findings are resolved.
+- **Breaking**: `/explain` and `/dismiss` are removed with no backwards compatibility.
+
+## 0.1.0-beta.9
+
+- **Fix**: `isBot()` no longer uses `GITHUB_ACTOR` to detect the bot. `GITHUB_ACTOR` is set by GitHub Actions to the human commenter, which caused the handler to silently ignore all human replies. The bot is now identified solely by the `github-actions[bot]` login.
+
+## 0.1.0-beta.8
+
+- **Auto-feedback evaluation**: when a developer replies to a bot inline comment with free-form text, the bot fetches the current state of the file and asks the LLM whether the reply addresses the finding. It always posts a response and resolves the thread if the decision is `resolved`.
+- **Project context graph**: the reviewer caches the detected tech stack in a hidden PR issue comment after the first review. Subsequent reviews read from cache, skipping re-detection — fixes "Stack detectado: Generic" on monorepos where `package.json` is not at the repo root.
+
+## 0.1.0-beta.7
+
+- Internal release: tests and tooling improvements.
+
+## 0.1.0-beta.6
+
+- **Fix**: patch inline comment metadata with real `commentId` and `threadNodeId` after posting (enables reliable thread resolution on subsequent commands).
+
+## 0.1.0-beta.5
+
+- **Incremental re-review**: on `push` events to an existing PR, only the new diff is reviewed. Prior open findings are passed as context so the LLM avoids re-flagging already tracked issues.
+
 ## 0.1.0-beta.4
 
 - **Auto-approve**: new `autoApprove` config block. When the model recommends `approve`, there are no `critical`/`major` findings, and `overallScore` meets `minScore`, the bot posts a real GitHub `APPROVE` event. Opt-in — disabled by default. See [Auto-Approve](./auto-approve).

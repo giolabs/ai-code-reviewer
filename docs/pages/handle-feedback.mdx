@@ -1,15 +1,16 @@
 # Inline Feedback
 
-The inline feedback feature lets developers reply directly to bot comments on a PR to get more context or dismiss findings they've addressed.
+The inline feedback feature lets developers interact with the bot directly from inline PR comment threads using `@botai` commands.
 
 ## Commands
 
+Replies must be inside an **inline thread** (a PR review comment), not on a general PR comment.
+
 | Reply | What happens |
 |---|---|
-| `/explain` | The bot replies with a detailed explanation of the finding: why it matters, what could go wrong, and a concrete fix example |
-| `/dismiss` | The bot marks the comment thread as resolved and acknowledges the dismissal |
-
-Replies must be on a **PR review comment** (inline comment on the diff), not on a regular PR comment.
+| `@botai approved` | The bot posts a reply acknowledging the approval, then submits a GitHub **APPROVE** review on the PR |
+| `@botai review """your explanation"""` | The bot reads your explanation, fetches the current file state, and asks the LLM whether the finding is resolved. It always posts a reply with its decision |
+| `@botai resolved` | The bot immediately marks the finding as resolved and closes the thread. If all open bot findings are now resolved, it auto-approves the PR |
 
 ## Setup
 
@@ -20,7 +21,6 @@ Add to `.ai-review.yml`:
 ```yaml
 feedback:
   enabled: true
-  allowDismiss: true
 ```
 
 ### 2. Add the workflow job
@@ -79,26 +79,38 @@ jobs:
 import { Callout } from 'nextra/components'
 
 <Callout type="info">
-The `GITHUB_ACTOR` variable is required. The handler uses it to avoid responding to its own comments in an infinite loop.
+The `GITHUB_ACTOR` variable is set automatically by GitHub Actions. It identifies who triggered the workflow, which the handler uses to skip its own bot replies.
 </Callout>
 
 ## How it works
 
 When a developer replies to a bot inline comment:
 
-1. The `pull_request_review_comment` event fires
-2. The `handle-feedback` workflow job starts
-3. The CLI reads the event payload from `GITHUB_EVENT_PATH`
-4. It checks that the reply is to a bot comment (not another developer's comment)
-5. It checks that the reply starts with `/explain` or `/dismiss`
-6. For `/explain`: sends the original finding + the file context to the LLM and posts a detailed reply
-7. For `/dismiss`: resolves the comment thread and posts a brief acknowledgment
+1. The `pull_request_review_comment` event fires.
+2. The `handle-feedback` workflow job starts.
+3. The CLI reads the event payload from `GITHUB_EVENT_PATH`.
+4. It checks that the commenter is not the bot itself.
+5. It looks for `@botai <command>` in the reply body.
+6. The matching handler runs (see command details below).
 
-## Auto-resolve on push
+If the reply does not contain `@botai`, the event is ignored silently.
 
-When new commits are pushed to the PR branch, the reviewer checks if any previously flagged lines have changed. If a finding's line was modified in the new push, the comment thread is resolved automatically and the bot replies confirming the fix was detected.
+## @botai approved
 
-## Example
+Use this command to approve the PR from any inline thread reply — regardless of which finding the thread belongs to.
+
+```
+Bot: 🟡 major — Missing input validation on /upload endpoint
+
+Developer (reply): @botai approved
+
+Bot: @lucasgio approved this PR. Proceeding to approve.
+[GitHub shows: ✅ lucasgio via @botai approved this pull request]
+```
+
+## @botai review
+
+Use this command when you've addressed a finding and want the bot to verify. Put your explanation between `"""` delimiters — the bot will read it along with the current state of the file to decide if the finding is resolved.
 
 ```
 Bot: 🔴 critical — Missing authentication guard
@@ -106,30 +118,32 @@ Bot: 🔴 critical — Missing authentication guard
        This endpoint has no @UseGuards() decorator. Any unauthenticated
        user can call it.
 
-Developer (reply): /explain
+Developer (reply): @botai review """Added @UseGuards(JwtAuthGuard) to
+the controller method in the latest commit (abc1234)."""
 
-Bot: The @UseGuards() decorator connects a NestJS guard to this endpoint.
-     Without it, the endpoint is publicly accessible regardless of any
-     global guards set in main.ts.
-
-     Fix: add @UseGuards(JwtAuthGuard) to the controller method:
-
-       @Get('profile')
-       @UseGuards(JwtAuthGuard)
-       getProfile(@Request() req) { ... }
-
-     If this endpoint is intentionally public, use @Public() from your
-     auth module and document why.
+Bot: The guard is now present on the method. The finding is resolved. ✅
 ```
 
-## Disabling dismiss
+If the bot determines the fix is insufficient, it replies with `maintained` and explains what's still missing.
 
-To keep findings visible even after developer acknowledgment (useful for audit purposes), set:
+## @botai resolved
 
-```yaml
-feedback:
-  enabled: true
-  allowDismiss: false
+Use this command to unconditionally close a finding without LLM evaluation — useful when the finding is a false positive or was addressed in a way that's hard to explain in text.
+
+```
+Bot: 🟡 major — Potential race condition in upload handler
+
+Developer (reply): @botai resolved
+
+Bot: Finding resolved by @lucasgio.
 ```
 
-With this setting, `/explain` still works but `/dismiss` is ignored and the bot replies explaining that dismissal is disabled.
+If this was the last open bot finding on the PR, the bot also submits an APPROVE review automatically.
+
+## Auto-resolve on push
+
+When new commits are pushed to the PR branch, the reviewer checks if any previously flagged lines have changed. If a finding's line was modified, the comment thread is resolved automatically.
+
+## Auto-approve when all findings are resolved
+
+Whenever `@botai resolved` (or `@botai review` with a `resolved` outcome) closes the last open bot finding on the PR, the bot submits a GitHub APPROVE review. This means developers don't need to run `@botai approved` separately once every finding is closed.
