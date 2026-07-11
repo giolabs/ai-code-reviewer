@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   loadConfig: vi.fn(),
   handle: vi.fn().mockResolvedValue(undefined),
   getReviewCommentEventFromEnv: vi.fn(),
+  getIssueCommentEventFromEnv: vi.fn(),
 }));
 
 vi.mock('../src/config.js', () => ({
@@ -14,6 +15,7 @@ vi.mock('../src/config.js', () => ({
 vi.mock('../src/github.js', () => ({
   GitHubClient: vi.fn().mockImplementation(() => ({})),
   getReviewCommentEventFromEnv: mocks.getReviewCommentEventFromEnv,
+  getIssueCommentEventFromEnv: mocks.getIssueCommentEventFromEnv,
 }));
 
 vi.mock('../src/feedback-handler.js', () => ({
@@ -87,30 +89,17 @@ describe('handleFeedback', () => {
     expect(mocks.handle).not.toHaveBeenCalled();
   });
 
-  it('should throw when no pull_request_review_comment event is found in the environment', async () => {
+  it('should throw when neither event type is detected in the environment', async () => {
     // Arrange
     mocks.loadConfig.mockReturnValue(makeConfig());
     mocks.getReviewCommentEventFromEnv.mockReturnValue(null);
+    mocks.getIssueCommentEventFromEnv.mockReturnValue(null);
 
     // Act & Assert
-    await expect(handleFeedback()).rejects.toThrow(
-      'No pull_request_review_comment event detected',
-    );
+    await expect(handleFeedback()).rejects.toThrow('No supported event detected');
   });
 
-  it('should return without calling FeedbackHandler when the comment is not a reply', async () => {
-    // Arrange
-    mocks.loadConfig.mockReturnValue(makeConfig());
-    mocks.getReviewCommentEventFromEnv.mockReturnValue(makeRawEvent({ inReplyToId: null }));
-
-    // Act
-    await handleFeedback();
-
-    // Assert
-    expect(mocks.handle).not.toHaveBeenCalled();
-  });
-
-  it('should call FeedbackHandler.handle with the correct FeedbackEvent', async () => {
+  it('should call FeedbackHandler.handle with review_comment source for pull_request_review_comment events', async () => {
     // Arrange
     mocks.loadConfig.mockReturnValue(makeConfig());
     mocks.getReviewCommentEventFromEnv.mockReturnValue(makeRawEvent({ inReplyToId: 100 }));
@@ -123,12 +112,36 @@ describe('handleFeedback', () => {
     expect(mocks.handle).toHaveBeenCalledWith(
       expect.objectContaining({
         actor: 'dev-user',
-        commentId: 200,
-        commentBody: '/explain',
         inReplyToId: 100,
-        pullNumber: 5,
-        repo: 'my-repo',
-        owner: 'my-org',
+        source: 'review_comment',
+      }),
+    );
+  });
+
+  it('should call FeedbackHandler.handle with issue_comment source for general PR comment events', async () => {
+    // Arrange
+    mocks.loadConfig.mockReturnValue(makeConfig());
+    mocks.getReviewCommentEventFromEnv.mockReturnValue(null);
+    mocks.getIssueCommentEventFromEnv.mockReturnValue({
+      actor: 'lucasgio',
+      commentId: 300,
+      commentBody: '@botai approved',
+      pullNumber: 29,
+      repo: 'flowstore',
+      owner: 'giolabs',
+    });
+
+    // Act
+    await handleFeedback();
+
+    // Assert
+    expect(mocks.handle).toHaveBeenCalledOnce();
+    expect(mocks.handle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: 'lucasgio',
+        commentBody: '@botai approved',
+        inReplyToId: null,
+        source: 'issue_comment',
       }),
     );
   });

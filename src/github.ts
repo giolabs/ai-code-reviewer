@@ -528,6 +528,20 @@ export class GitHubClient {
     }
   }
 
+  async postPullRequestComment(args: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    body: string;
+  }): Promise<void> {
+    await this.octokit.issues.createComment({
+      owner: args.owner,
+      repo: args.repo,
+      issue_number: args.pullNumber,
+      body: args.body,
+    });
+  }
+
   async submitApprovalReview(args: {
     owner: string;
     repo: string;
@@ -708,6 +722,55 @@ export function getReviewCommentEventFromEnv(): {
     owner,
     repo,
     headSha: (head?.sha as string) ?? '',
+  };
+}
+
+/**
+ * Reads an issue_comment event (general PR comment) from GITHUB_EVENT_PATH.
+ * Returns null when the event is not an issue_comment on a pull request.
+ */
+export function getIssueCommentEventFromEnv(): {
+  actor: string;
+  commentId: number;
+  commentBody: string;
+  pullNumber: number;
+  owner: string;
+  repo: string;
+} | null {
+  const repository = process.env.GITHUB_REPOSITORY;
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+
+  if (!repository || !eventPath || !existsSync(eventPath)) return null;
+
+  const [owner, repo] = repository.split('/');
+  if (!owner || !repo) return null;
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(eventPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+
+  if (typeof raw !== 'object' || raw === null) return null;
+  const ev = raw as Record<string, unknown>;
+
+  const comment = ev.comment as Record<string, unknown> | undefined;
+  const issue = ev.issue as Record<string, unknown> | undefined;
+  const sender = ev.sender as Record<string, unknown> | undefined;
+
+  if (!comment || !issue) return null;
+
+  // Only process if the issue is a pull request
+  if (!('pull_request' in issue)) return null;
+
+  return {
+    actor: (sender?.login as string) ?? '',
+    commentId: comment.id as number,
+    commentBody: (comment.body as string) ?? '',
+    pullNumber: issue.number as number,
+    owner,
+    repo,
   };
 }
 

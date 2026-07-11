@@ -6,6 +6,7 @@ import {
   GitHubClient,
   buildFindingMetadata,
   getReviewCommentEventFromEnv,
+  getIssueCommentEventFromEnv,
   getPullRequestContextFromEnv,
   getPushEventShasFromEnv,
   buildDiffLineMap,
@@ -790,5 +791,72 @@ describe('GitHubClient.countOpenBotFindings', () => {
 
     // Assert
     expect(result).toBe(1);
+  });
+});
+
+describe('getIssueCommentEventFromEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = null;
+    }
+  });
+
+  it('should return null when the event has no issue field', () => {
+    // Arrange
+    const payload = { comment: { id: 1, body: '@botai approved' }, sender: { login: 'dev' } };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'org/repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getIssueCommentEventFromEnv();
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return null when the issue is not a pull request', () => {
+    // Arrange
+    const payload = {
+      comment: { id: 1, body: '@botai approved' },
+      issue: { number: 5 },
+      sender: { login: 'dev' },
+    };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'org/repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getIssueCommentEventFromEnv();
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('should return parsed event when the issue is a pull request', () => {
+    // Arrange
+    const payload = {
+      comment: { id: 42, body: '@botai approved' },
+      issue: { number: 7, pull_request: { url: 'https://api.github.com/repos/org/repo/pulls/7' } },
+      sender: { login: 'lucasgio' },
+    };
+    const filePath = writeTempEvent(payload);
+    vi.stubEnv('GITHUB_REPOSITORY', 'org/repo');
+    vi.stubEnv('GITHUB_EVENT_PATH', filePath);
+
+    // Act
+    const result = getIssueCommentEventFromEnv();
+
+    // Assert
+    expect(result).toMatchObject({
+      actor: 'lucasgio',
+      commentId: 42,
+      commentBody: '@botai approved',
+      pullNumber: 7,
+      owner: 'org',
+      repo: 'repo',
+    });
   });
 });

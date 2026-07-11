@@ -45,6 +45,15 @@ export class FeedbackHandler {
       return;
     }
 
+    if (event.source === 'issue_comment') {
+      const msg =
+        this.config.language === 'es'
+          ? `\`@botai ${parsed.command}\` solo funciona en respuestas a comentarios inline del diff. Usá \`@botai approved\` desde un comentario general.`
+          : `\`@botai ${parsed.command}\` only works in inline diff thread replies. Use \`@botai approved\` from a general PR comment.`;
+      await this.postReply(event, msg);
+      return;
+    }
+
     if (event.inReplyToId === null) return;
 
     const parentComment = await this.githubClient.getReviewComment(
@@ -251,6 +260,15 @@ export class FeedbackHandler {
   }
 
   private async postReply(event: FeedbackEvent, body: string): Promise<void> {
+    if (event.source === 'issue_comment') {
+      await this.githubClient.postPullRequestComment({
+        owner: event.owner,
+        repo: event.repo,
+        pullNumber: event.pullNumber,
+        body,
+      });
+      return;
+    }
     await this.githubClient.postReply({
       owner: event.owner,
       repo: event.repo,

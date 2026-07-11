@@ -215,16 +215,18 @@ export interface FeedbackEvaluationPromptArgs {
 export interface FeedbackEvent {
   /** GitHub login of the person who replied */
   actor: string;
-  /** ID of the reply comment (the one containing the slash command) */
+  /** ID of the reply comment (the one containing the @botai command) */
   commentId: number;
   commentBody: string;
-  /** ID of the parent AI inline comment (from event.comment.in_reply_to_id); null if top-level */
+  /** ID of the parent AI inline comment; null when the source is issue_comment or a top-level review comment */
   inReplyToId: number | null;
   pullNumber: number;
   repo: string;
   owner: string;
   /** SHA of the PR's HEAD commit at the time of the reply event */
   headSha?: string;
+  /** Whether the event came from a PR review comment thread or a general PR comment */
+  source: 'review_comment' | 'issue_comment';
 }
 
 export interface ResolveFixedOptions {

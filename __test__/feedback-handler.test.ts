@@ -13,6 +13,7 @@ function makeFeedbackEvent(overrides: Partial<FeedbackEvent> = {}): FeedbackEven
     pullNumber: 5,
     repo: 'my-repo',
     owner: 'my-org',
+    source: 'review_comment',
     ...overrides,
   };
 }
@@ -72,6 +73,7 @@ function makeGitHubClient(
     getFileAtRef: vi.fn().mockResolvedValue(null),
     submitApprovalReview: vi.fn().mockResolvedValue(undefined),
     countOpenBotFindings: vi.fn().mockResolvedValue(0),
+    postPullRequestComment: vi.fn().mockResolvedValue(undefined),
   } as unknown as GitHubClient;
 }
 
@@ -173,6 +175,50 @@ describe('FeedbackHandler', () => {
 
       // Assert
       expect(client.submitApprovalReview).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('issue_comment source', () => {
+    it('should approve when @botai approved is posted as a general PR comment', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient();
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai approved', inReplyToId: null, source: 'issue_comment' }));
+
+      // Assert
+      expect(client.postPullRequestComment).toHaveBeenCalledOnce();
+      expect(client.submitApprovalReview).toHaveBeenCalledOnce();
+    });
+
+    it('should reply with inline-only message when @botai review is used in a general PR comment', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient();
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai review """text"""', inReplyToId: null, source: 'issue_comment' }));
+
+      // Assert
+      expect(client.postPullRequestComment).toHaveBeenCalledOnce();
+      expect(client.submitApprovalReview).not.toHaveBeenCalled();
+    });
+
+    it('should reply with inline-only message when @botai resolved is used in a general PR comment', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient();
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai resolved', inReplyToId: null, source: 'issue_comment' }));
+
+      // Assert
+      expect(client.postPullRequestComment).toHaveBeenCalledOnce();
+      expect(client.editComment).not.toHaveBeenCalled();
     });
   });
 

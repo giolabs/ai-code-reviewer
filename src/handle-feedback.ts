@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { ConfigLoader } from './config.js';
-import { GitHubClient, getReviewCommentEventFromEnv } from './github.js';
+import { GitHubClient, getReviewCommentEventFromEnv, getIssueCommentEventFromEnv } from './github.js';
 import { FeedbackHandler } from './feedback-handler.js';
 import { createLLMAdapter } from './llm/factory.js';
 import type { FeedbackEvent } from './types.js';
@@ -16,28 +16,40 @@ export async function handleFeedback(): Promise<void> {
     return;
   }
 
-  const rawEvent = getReviewCommentEventFromEnv();
-  if (!rawEvent) {
+  const reviewCommentEvent = getReviewCommentEventFromEnv();
+  const issueCommentEvent = reviewCommentEvent ? null : getIssueCommentEventFromEnv();
+
+  if (!reviewCommentEvent && !issueCommentEvent) {
     throw new Error(
-      'No pull_request_review_comment event detected. This command must run in GitHub Actions on a pull_request_review_comment event.',
+      'No supported event detected. This command must run in GitHub Actions on a pull_request_review_comment or issue_comment event.',
     );
   }
 
-  if (rawEvent.inReplyToId === null) {
-    console.log(chalk.dim('Comment is not a reply to an existing comment. Ignoring.'));
-    return;
+  let event: FeedbackEvent;
+  if (reviewCommentEvent) {
+    event = {
+      actor: reviewCommentEvent.actor,
+      commentId: reviewCommentEvent.commentId,
+      commentBody: reviewCommentEvent.commentBody,
+      inReplyToId: reviewCommentEvent.inReplyToId,
+      pullNumber: reviewCommentEvent.pullNumber,
+      repo: reviewCommentEvent.repo,
+      owner: reviewCommentEvent.owner,
+      headSha: reviewCommentEvent.headSha,
+      source: 'review_comment',
+    };
+  } else {
+    event = {
+      actor: issueCommentEvent!.actor,
+      commentId: issueCommentEvent!.commentId,
+      commentBody: issueCommentEvent!.commentBody,
+      inReplyToId: null,
+      pullNumber: issueCommentEvent!.pullNumber,
+      repo: issueCommentEvent!.repo,
+      owner: issueCommentEvent!.owner,
+      source: 'issue_comment',
+    };
   }
-
-  const event: FeedbackEvent = {
-    actor: rawEvent.actor,
-    commentId: rawEvent.commentId,
-    commentBody: rawEvent.commentBody,
-    inReplyToId: rawEvent.inReplyToId,
-    pullNumber: rawEvent.pullNumber,
-    repo: rawEvent.repo,
-    owner: rawEvent.owner,
-    headSha: rawEvent.headSha,
-  };
 
   const githubClient = new GitHubClient();
 
