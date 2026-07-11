@@ -10,7 +10,7 @@ npx -y @giolabsuy/ai-code-reviewer@latest review-pr
 
 - **Inline comments** — Findings posted directly on PR diff lines, with severity labels (`critical` → `nitpick`)
 - **Multi-provider** — OpenAI, Anthropic, Gemini, and self-hosted Ollama. Switch with one line in your config
-- **Inline feedback** — Reply `/explain` to any bot comment for a deep explanation, or `/dismiss` to resolve it
+- **Inline feedback** — Reply `@botai review """explanation"""` to get an LLM evaluation, `@botai resolved` to close a thread, or `@botai approved` to approve the whole PR
 - **Auto-approve** — Approves clean PRs automatically when the model is confident (opt-in)
 - **Dependency graph** — Analyzes callers and imports of changed JS/TS files to surface regression risks
 - **Custom rules** — Add project-specific review rules in Markdown; your rules override the built-ins

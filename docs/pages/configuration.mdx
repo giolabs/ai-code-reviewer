@@ -60,9 +60,9 @@ customInstructions: |
   layer into infrastructure is a 'major' finding.
 
 # Inline comment feedback feature (opt-in)
+# Enables @botai approved | review | resolved commands in inline threads
 feedback:
   enabled: true
-  allowDismiss: true
 
 # Auto-approve when model recommends approve with no blocking findings (opt-in)
 autoApprove:
@@ -157,15 +157,9 @@ Free-form text appended verbatim to the system prompt after all other rules. Hig
 
 ### `feedback.enabled`
 
-Enable the `/explain` and `/dismiss` inline feedback commands. Requires the `handle-feedback` workflow. See [Inline Feedback](./handle-feedback).
+Enable `@botai` commands in inline PR comment threads. Requires the `handle-feedback` workflow job. See [Inline Feedback](./handle-feedback).
 
 **Default:** `false`
-
-### `feedback.allowDismiss`
-
-Allow developers to use `/dismiss` to mark findings as resolved.
-
-**Default:** `true`
 
 ### `autoApprove.enabled`
 

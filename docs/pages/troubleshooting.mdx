@@ -54,13 +54,13 @@ Try running `review-diff --base main` locally with `DEBUG=1` to see the full pro
 
 ## `handle-feedback` doesn't respond
 
-**Symptom:** Reply `/explain` or `/dismiss` to a bot comment but nothing happens.
+**Symptom:** Reply `@botai resolved` (or another `@botai` command) to a bot comment but nothing happens.
 
 **Check:**
 1. The workflow has a `pull_request_review_comment` trigger.
 2. `feedback.enabled: true` is set in `.ai-review.yml`.
-3. `GITHUB_ACTOR` is passed as an env var in the `handle-feedback` step.
-4. The comment you replied to is a review comment on the diff (not a regular PR comment).
+3. The comment you replied to is a review comment on the diff (not a regular PR comment).
+4. The reply contains `@botai` followed by a valid command: `approved`, `review`, or `resolved`. Text without `@botai` is silently ignored.
 
 See [Inline Feedback](./handle-feedback) for the full workflow setup.
 

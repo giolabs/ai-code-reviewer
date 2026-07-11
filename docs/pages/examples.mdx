@@ -1,0 +1,182 @@
+# Examples
+
+Two ready-to-use configuration examples — a minimal setup to get started quickly, and a full setup that enables every feature.
+
+## Minimal configuration
+
+The smallest possible setup: OpenAI, all defaults, English output. No config file needed beyond the workflow.
+
+**`.github/workflows/ai-review.yml`**
+
+```yaml
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  ai-review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch origin ${{ github.base_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+No `.ai-review.yml` needed — all defaults apply:
+- Provider: OpenAI `gpt-4o-mini`
+- Language: English
+- Inline comments on the diff
+- Minimum severity: `minor`
+- Tech stack: auto-detected
+
+---
+
+## Full configuration
+
+Enables every feature: incremental re-review, `@botai` inline feedback, auto-approve, custom rules, Anthropic provider, and dependency graph.
+
+**`.github/workflows/ai-review.yml`**
+
+```yaml
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  ai-review:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch origin ${{ github.base_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest review-pr
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  handle-feedback:
+    if: github.event_name == 'pull_request_review_comment'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx -y @giolabsuy/ai-code-reviewer@latest handle-feedback
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+```
+
+**`.ai-review.yml`**
+
+```yaml
+# LLM provider
+provider: anthropic
+model: claude-opus-4-8
+
+# Output language
+language: en
+
+# Tech stack (omit to auto-detect)
+# tech: nextjs
+
+# Custom rules file (Markdown, appended to system prompt)
+rules: ./code-review-rules.md
+
+# Files to exclude from review
+ignore:
+  - node_modules/**
+  - dist/**
+  - "*.lock"
+  - "*.min.js"
+  - "**/__snapshots__/**"
+  - "**/*.generated.ts"
+
+# Minimum severity to report
+minSeverity: minor
+
+# Maximum patch size per file (bytes)
+maxFileSize: 150000
+
+# Which check categories to run
+checks:
+  security: true
+  performance: true
+  maintainability: true
+  testing: true
+  documentation: false
+  style: false
+  bug-risk: true
+  architecture: true
+
+# Inline comment settings
+inlineComments: true
+summaryComment: true
+maxInlineComments: 25
+
+# Additional instructions appended verbatim to the system prompt
+# These override everything else — use sparingly
+customInstructions: |
+  This project follows Clean Architecture (domain / application / infrastructure layers).
+  Any import from infrastructure into domain is a critical finding.
+  Treat missing OpenTelemetry spans on public service methods as a minor finding.
+
+# @botai inline feedback commands (requires handle-feedback job above)
+feedback:
+  enabled: true
+
+# Auto-approve when the model is confident and there are no blocking findings
+autoApprove:
+  enabled: true
+  minScore: 8
+```
+
+import { Callout } from 'nextra/components'
+
+<Callout type="info">
+Replace `ANTHROPIC_API_KEY` with `OPENAI_API_KEY` (and set `provider: openai`) or `GEMINI_API_KEY` (and `provider: gemini`) if you use a different provider. See [Providers](./providers) for model names.
+</Callout>
+
+### What each feature does in the full config
+
+| Feature | Config key | Docs |
+|---|---|---|
+| Anthropic Claude as the LLM | `provider: anthropic` + `model` | [Providers](./providers) |
+| Custom review rules | `rules: ./code-review-rules.md` | [Custom Rules](./custom-rules) |
+| `@botai` inline commands | `feedback.enabled: true` + `handle-feedback` job | [Inline Feedback](./handle-feedback) |
+| Auto-approve clean PRs | `autoApprove.enabled: true` + `minScore` | [Auto-Approve](./auto-approve) |
+| Incremental re-review | automatic on `synchronize` events | [Quick Start](./getting-started) |
+| Dependency graph | automatic on JS/TS stacks | [Design Decisions](./design) |
