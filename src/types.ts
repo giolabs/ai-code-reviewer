@@ -162,10 +162,11 @@ export enum FindingStatus {
   Resolved = 'resolved',
 }
 
-export enum SlashCommand {
-  Explain = 'explain',
-  Dismiss = 'dismiss',
-  Unknown = 'unknown',
+export type BotCommand = 'approved' | 'review' | 'resolved' | 'unknown';
+
+export interface BotCommandParseResult {
+  command: BotCommand;
+  reviewText?: string;
 }
 
 export interface FindingMetadata {
@@ -235,15 +236,6 @@ export interface ResolveFixedOptions {
   changedFiles: ReadonlyArray<string>;
   commitSha: string;
   summaryCommentId: number;
-}
-
-export interface ExplainPromptOptions {
-  findingMessage: string;
-  filePath: string;
-  line: number;
-  severity: Severity;
-  codeContext: string;
-  language: 'es' | 'en';
 }
 
 /**

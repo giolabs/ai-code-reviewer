@@ -1,8 +1,15 @@
 import chalk from 'chalk';
 import type { GitHubClient } from './github.js';
 import { PromptBuilder } from './prompts.js';
-import type { FeedbackConfig, FeedbackEvent, FeedbackEvaluationResult, FindingMetadata, ReviewerConfig } from './types.js';
-import { FindingStatus, SlashCommand } from './types.js';
+import type {
+  BotCommandParseResult,
+  FeedbackConfig,
+  FeedbackEvent,
+  FeedbackEvaluationResult,
+  FindingMetadata,
+  ReviewerConfig,
+} from './types.js';
+import { FindingStatus } from './types.js';
 
 const BOT_ACTOR = 'github-actions[bot]';
 
@@ -29,9 +36,12 @@ export class FeedbackHandler {
     if (!this.isFeedbackEnabled()) return;
     if (this.isBot(event.actor)) return;
 
-    const command = this.parseSlashCommand(event.commentBody);
-    if (command === SlashCommand.Unknown) {
-      await this.handleFeedbackEvaluation(event);
+    const parsed = this.parseBotCommand(event.commentBody);
+
+    if (parsed.command === 'unknown') return;
+
+    if (parsed.command === 'approved') {
+      await this.handleApproved(event);
       return;
     }
 
@@ -47,16 +57,20 @@ export class FeedbackHandler {
     const metadata = this.githubClient.extractFindingMetadata(parentComment.body);
     if (!metadata) return;
 
-    if (command === SlashCommand.Explain) {
-      await this.handleExplain({ event, metadata, parentBody: parentComment.body });
+    if (parsed.command === 'review') {
+      await this.handleReview({
+        event,
+        metadata,
+        parentBody: parentComment.body,
+        reviewText: parsed.reviewText ?? '',
+      });
     } else {
-      await this.handleDismiss({ event, metadata, parentBody: parentComment.body });
+      await this.handleResolved({ event, metadata, parentBody: parentComment.body });
     }
   }
 
   private isFeedbackEnabled(): boolean {
-    const feedbackConfig = this.getFeedbackConfig();
-    return feedbackConfig.enabled;
+    return this.getFeedbackConfig().enabled;
   }
 
   private getFeedbackConfig(): FeedbackConfig {
@@ -67,95 +81,50 @@ export class FeedbackHandler {
     return actor === BOT_ACTOR;
   }
 
-  private parseSlashCommand(body: string): SlashCommand {
-    const trimmed = body.trim();
-    if (trimmed.startsWith('/explain')) return SlashCommand.Explain;
-    if (trimmed.startsWith('/dismiss')) return SlashCommand.Dismiss;
-    return SlashCommand.Unknown;
+  private parseBotCommand(body: string): BotCommandParseResult {
+    const match = /@botai\s+(approved|review|resolved)/i.exec(body);
+    if (!match) return { command: 'unknown' };
+
+    const keyword = match[1].toLowerCase() as 'approved' | 'review' | 'resolved';
+
+    if (keyword === 'review') {
+      const textMatch = /"""\s*([\s\S]+?)\s*"""/.exec(body);
+      return { command: 'review', reviewText: textMatch?.[1] ?? '' };
+    }
+
+    return { command: keyword };
   }
 
-  private async handleExplain(args: {
-    event: FeedbackEvent;
-    metadata: FindingMetadata;
-    parentBody: string;
-  }): Promise<void> {
-    const { event, metadata } = args;
+  private async handleApproved(event: FeedbackEvent): Promise<void> {
+    const replyBody =
+      this.config.language === 'es'
+        ? `@${event.actor} aprobó este PR. Procediendo a aprobar.`
+        : `@${event.actor} approved this PR. Proceeding to approve.`;
 
-    const codeContext = this.extractCodeContextFromBody(args.parentBody);
+    await this.postReply(event, replyBody);
 
-    const prompt = this.promptBuilder.buildExplainPrompt({
-      findingMessage: metadata.file,
-      filePath: metadata.file,
-      line: metadata.line,
-      severity: metadata.severity,
-      codeContext,
-      language: this.config.language,
-    });
+    const approvalBody =
+      this.config.language === 'es'
+        ? `PR aprobado por @${event.actor} vía @botai.`
+        : `PR approved by @${event.actor} via @botai.`;
 
-    let explanation: string;
-    try {
-      explanation = await this.llmCall(prompt);
-    } catch {
-      await this.postReply(event, this.explainErrorMessage());
-      return;
-    }
-
-    await this.postReply(event, explanation);
-  }
-
-  private async handleDismiss(args: {
-    event: FeedbackEvent;
-    metadata: FindingMetadata;
-    parentBody: string;
-  }): Promise<void> {
-    const { event, metadata, parentBody } = args;
-
-    const feedbackConfig = this.getFeedbackConfig();
-    if (!feedbackConfig.allowDismiss) {
-      await this.postReply(event, this.dismissDisabledMessage());
-      return;
-    }
-
-    if (metadata.status !== FindingStatus.Open) {
-      await this.postReply(event, this.alreadyResolvedMessage());
-      return;
-    }
-
-    const updatedMetadata: FindingMetadata = {
-      ...metadata,
-      status: FindingStatus.Dismissed,
-      dismissedBy: event.actor,
-    };
-
-    const updatedBody = this.githubClient.embedFindingMetadata(parentBody, updatedMetadata);
-
-    await this.githubClient.editComment({
+    await this.githubClient.submitApprovalReview({
       owner: event.owner,
       repo: event.repo,
-      commentId: event.inReplyToId!,
-      body: updatedBody,
-      isPrReviewComment: true,
+      pullNumber: event.pullNumber,
+      body: approvalBody,
     });
 
-    if (metadata.threadNodeId) {
-      await this.githubClient.resolveThread({ threadNodeId: metadata.threadNodeId });
-    }
-
-    await this.postReply(event, this.dismissalMessage(event.actor));
+    console.log(chalk.green(`PR aprobado por @${event.actor}.`));
   }
 
-  private async handleFeedbackEvaluation(event: FeedbackEvent): Promise<void> {
-    if (event.inReplyToId === null) return;
-
-    const parentComment = await this.githubClient.getReviewComment(
-      event.owner,
-      event.repo,
-      event.inReplyToId,
-    );
-    if (!parentComment) return;
-
-    const metadata = this.githubClient.extractFindingMetadata(parentComment.body);
-    if (!metadata) return;
+  private async handleReview(args: {
+    event: FeedbackEvent;
+    metadata: FindingMetadata;
+    parentBody: string;
+    reviewText: string;
+  }): Promise<void> {
+    const { event, metadata, parentBody, reviewText } = args;
 
     const fileContent = await this.githubClient.getFileAtRef({
       owner: event.owner,
@@ -165,8 +134,7 @@ export class FeedbackHandler {
     });
 
     const fileWindow = this.extractLineWindow(fileContent, metadata.line);
-
-    const findingText = this.extractFindingTextFromBody(parentComment.body);
+    const findingText = this.extractFindingTextFromBody(parentBody);
 
     const prompt = this.promptBuilder.buildFeedbackEvaluationPrompt({
       findingTitle: findingText.title,
@@ -174,7 +142,7 @@ export class FeedbackHandler {
       findingSeverity: metadata.severity,
       findingFile: metadata.file,
       findingLine: metadata.line,
-      devReply: event.commentBody,
+      devReply: reviewText,
       fileWindow,
       language: this.config.language,
     });
@@ -194,21 +162,72 @@ export class FeedbackHandler {
     await this.postReply(event, result.reply);
 
     if (result.decision === 'resolved') {
-      const updatedMetadata: FindingMetadata = { ...metadata, status: FindingStatus.Resolved };
-      const updatedBody = this.githubClient.embedFindingMetadata(parentComment.body, updatedMetadata);
-      await this.githubClient.editComment({
-        owner: event.owner,
-        repo: event.repo,
-        commentId: event.inReplyToId,
-        body: updatedBody,
-        isPrReviewComment: true,
-      });
-      if (metadata.threadNodeId) {
-        await this.githubClient.resolveThread({ threadNodeId: metadata.threadNodeId });
-      }
+      await this.markResolved({ event, metadata, parentBody });
     }
 
-    console.log(chalk.dim(`Evaluación de feedback: ${result.decision}`));
+    console.log(chalk.dim(`@botai review: ${result.decision}`));
+  }
+
+  private async handleResolved(args: {
+    event: FeedbackEvent;
+    metadata: FindingMetadata;
+    parentBody: string;
+  }): Promise<void> {
+    const { event, metadata, parentBody } = args;
+
+    const replyBody =
+      this.config.language === 'es'
+        ? `Hallazgo resuelto por @${event.actor}.`
+        : `Finding resolved by @${event.actor}.`;
+
+    await this.postReply(event, replyBody);
+
+    await this.markResolved({ event, metadata, parentBody });
+
+    const openCount = await this.githubClient.countOpenBotFindings({
+      owner: event.owner,
+      repo: event.repo,
+      pullNumber: event.pullNumber,
+    });
+
+    if (openCount === 0) {
+      const approvalBody =
+        this.config.language === 'es'
+          ? `Todos los hallazgos fueron resueltos. PR aprobado automáticamente.`
+          : `All findings resolved. PR automatically approved.`;
+
+      await this.githubClient.submitApprovalReview({
+        owner: event.owner,
+        repo: event.repo,
+        pullNumber: event.pullNumber,
+        body: approvalBody,
+      });
+
+      console.log(chalk.green('Todos los hallazgos resueltos. PR aprobado.'));
+    }
+  }
+
+  private async markResolved(args: {
+    event: FeedbackEvent;
+    metadata: FindingMetadata;
+    parentBody: string;
+  }): Promise<void> {
+    const { event, metadata, parentBody } = args;
+
+    const updatedMetadata: FindingMetadata = { ...metadata, status: FindingStatus.Resolved };
+    const updatedBody = this.githubClient.embedFindingMetadata(parentBody, updatedMetadata);
+
+    await this.githubClient.editComment({
+      owner: event.owner,
+      repo: event.repo,
+      commentId: event.inReplyToId!,
+      body: updatedBody,
+      isPrReviewComment: true,
+    });
+
+    if (metadata.threadNodeId) {
+      await this.githubClient.resolveThread({ threadNodeId: metadata.threadNodeId });
+    }
   }
 
   private extractLineWindow(fileContent: string | null, line: number): string {
@@ -236,37 +255,8 @@ export class FeedbackHandler {
       owner: event.owner,
       repo: event.repo,
       pullNumber: event.pullNumber,
-      commentId: event.inReplyToId!,
+      commentId: event.inReplyToId ?? event.commentId,
       body,
     });
-  }
-
-  private extractCodeContextFromBody(commentBody: string): string {
-    const withoutMeta = commentBody.replace(/<!-- ai-review-finding:[\s\S]*?-->/, '').trim();
-    return withoutMeta.slice(0, 1000);
-  }
-
-  private dismissalMessage(actor: string): string {
-    return this.config.language === 'es'
-      ? `Hallazgo descartado por @${actor}. Hilo resuelto.`
-      : `Finding dismissed by @${actor}. Thread resolved.`;
-  }
-
-  private dismissDisabledMessage(): string {
-    return this.config.language === 'es'
-      ? 'El descarte de hallazgos está deshabilitado en la configuración.'
-      : 'Dismissing findings is disabled in the project configuration.';
-  }
-
-  private alreadyResolvedMessage(): string {
-    return this.config.language === 'es'
-      ? 'Este hallazgo ya fue resuelto o descartado.'
-      : 'This finding has already been resolved or dismissed.';
-  }
-
-  private explainErrorMessage(): string {
-    return this.config.language === 'es'
-      ? 'No se pudo generar la explicación. Intentá de nuevo.'
-      : 'Could not generate explanation. Please try again.';
   }
 }

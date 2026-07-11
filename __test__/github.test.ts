@@ -710,3 +710,85 @@ describe('getReviewCommentEventFromEnv headSha', () => {
     expect(result?.headSha).toBe('');
   });
 });
+
+describe('GitHubClient.submitApprovalReview', () => {
+  it('should call pulls.createReview with event APPROVE', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake-token' });
+    const mockCreateReview = vi.fn().mockResolvedValue({});
+    (client as unknown as Record<string, unknown>)['octokit'] = {
+      pulls: { createReview: mockCreateReview },
+    };
+
+    // Act
+    await client.submitApprovalReview({ owner: 'org', repo: 'repo', pullNumber: 1, body: 'LGTM' });
+
+    // Assert
+    expect(mockCreateReview).toHaveBeenCalledWith({
+      owner: 'org',
+      repo: 'repo',
+      pull_number: 1,
+      event: 'APPROVE',
+      body: 'LGTM',
+    });
+  });
+
+  it('should not throw when the API call fails', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake-token' });
+    (client as unknown as Record<string, unknown>)['octokit'] = {
+      pulls: { createReview: vi.fn().mockRejectedValue(new Error('forbidden')) },
+    };
+
+    // Act + Assert
+    await expect(
+      client.submitApprovalReview({ owner: 'org', repo: 'repo', pullNumber: 1, body: '' }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('GitHubClient.countOpenBotFindings', () => {
+  it('should return zero when there are no review comments', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake-token' });
+    const mockPaginate = {
+      iterator: vi.fn().mockReturnValue([{ data: [] }]),
+    };
+    (client as unknown as Record<string, unknown>)['octokit'] = {
+      pulls: { listReviewComments: vi.fn() },
+      paginate: mockPaginate,
+    };
+
+    // Act
+    const result = await client.countOpenBotFindings({ owner: 'org', repo: 'repo', pullNumber: 1 });
+
+    // Assert
+    expect(result).toBe(0);
+  });
+
+  it('should count only bot comments with open status in their metadata', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake-token' });
+    const openMeta = JSON.stringify({ id: 'x', file: 'f.ts', line: 1, severity: 'major', status: FindingStatus.Open, dismissedBy: null, commentId: 10, threadNodeId: '' });
+    const resolvedMeta = JSON.stringify({ id: 'y', file: 'g.ts', line: 2, severity: 'minor', status: FindingStatus.Resolved, dismissedBy: null, commentId: 11, threadNodeId: '' });
+    const mockPaginate = {
+      iterator: vi.fn().mockReturnValue([{
+        data: [
+          { id: 10, node_id: '', body: `text <!-- ai-review-finding:${openMeta} -->`, path: 'f.ts', user: { login: 'github-actions[bot]' }, pull_request_review_id: 1 },
+          { id: 11, node_id: '', body: `text <!-- ai-review-finding:${resolvedMeta} -->`, path: 'g.ts', user: { login: 'github-actions[bot]' }, pull_request_review_id: 1 },
+          { id: 12, node_id: '', body: `text <!-- ai-review-finding:${openMeta} -->`, path: 'h.ts', user: { login: 'human-dev' }, pull_request_review_id: 2 },
+        ],
+      }]),
+    };
+    (client as unknown as Record<string, unknown>)['octokit'] = {
+      pulls: { listReviewComments: vi.fn() },
+      paginate: mockPaginate,
+    };
+
+    // Act
+    const result = await client.countOpenBotFindings({ owner: 'org', repo: 'repo', pullNumber: 1 });
+
+    // Assert
+    expect(result).toBe(1);
+  });
+});

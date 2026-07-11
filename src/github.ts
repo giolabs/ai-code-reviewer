@@ -2,12 +2,12 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { Octokit } from '@octokit/rest';
 import { graphql } from '@octokit/graphql';
+import { FindingStatus } from './types.js';
 import type {
   ChangedFile,
   PullRequestContext,
   ReviewFinding,
   FindingMetadata,
-  FindingStatus,
   PushEventShas,
 } from './types.js';
 
@@ -526,6 +526,45 @@ export class GitHubClient {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('[warn] No se pudo guardar el contexto del proyecto:', msg);
     }
+  }
+
+  async submitApprovalReview(args: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    body: string;
+  }): Promise<void> {
+    try {
+      await this.octokit.pulls.createReview({
+        owner: args.owner,
+        repo: args.repo,
+        pull_number: args.pullNumber,
+        event: 'APPROVE',
+        body: args.body,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[warn] No se pudo aprobar el PR:', msg);
+    }
+  }
+
+  async countOpenBotFindings(args: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+  }): Promise<number> {
+    const comments = await this.getPullRequestReviewComments(
+      args.owner,
+      args.repo,
+      args.pullNumber,
+    );
+    let count = 0;
+    for (const comment of comments) {
+      if (comment.user !== 'github-actions[bot]') continue;
+      const metadata = this.extractFindingMetadata(comment.body);
+      if (metadata && metadata.status === FindingStatus.Open) count++;
+    }
+    return count;
   }
 }
 

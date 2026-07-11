@@ -1,4 +1,4 @@
-import type { ChangedFile, ReviewerConfig, TechStack, ExplainPromptOptions, PriorFinding, FeedbackEvaluationPromptArgs } from './types.js';
+import type { ChangedFile, ReviewerConfig, TechStack, PriorFinding, FeedbackEvaluationPromptArgs } from './types.js';
 import { TechDetector } from './tech-detect.js';
 
 interface SystemPromptArgs {
@@ -287,28 +287,4 @@ ${langInstruction}`,
     ].join('\n');
   }
 
-  buildExplainPrompt(options: ExplainPromptOptions): string {
-    const { findingMessage, filePath, line, severity, codeContext, language } = options;
-
-    const langInstruction =
-      language === 'es'
-        ? 'Respondé SIEMPRE en español rioplatense, claro y profesional. Limitá la respuesta a 3-5 oraciones.'
-        : 'Always respond in clear, professional English. Limit your response to 3-5 sentences.';
-
-    return [
-      `You are a Senior Staff Engineer. A developer asked you to explain why the following code review finding was flagged.`,
-      ``,
-      `**File:** \`${filePath}\` (line ${line})`,
-      `**Severity:** ${severity}`,
-      `**Finding:** ${findingMessage}`,
-      ``,
-      `**Code context:**`,
-      `\`\`\``,
-      codeContext,
-      `\`\`\``,
-      ``,
-      `Explain clearly and concisely why this is a problem and what risk it poses. Do NOT repeat the finding verbatim — add reasoning and context.`,
-      langInstruction,
-    ].join('\n');
-  }
 }

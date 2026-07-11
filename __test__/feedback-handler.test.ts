@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { FeedbackHandler } from '../src/feedback-handler.js';
-import { FindingStatus, SlashCommand } from '../src/types.js';
+import { FindingStatus } from '../src/types.js';
 import type { FeedbackEvent, FindingMetadata, ReviewerConfig } from '../src/types.js';
 import type { GitHubClient } from '../src/github.js';
 
@@ -8,7 +8,7 @@ function makeFeedbackEvent(overrides: Partial<FeedbackEvent> = {}): FeedbackEven
   return {
     actor: 'dev-user',
     commentId: 200,
-    commentBody: '/explain',
+    commentBody: '@botai resolved',
     inReplyToId: 100,
     pullNumber: 5,
     repo: 'my-repo',
@@ -70,6 +70,8 @@ function makeGitHubClient(
     resolveThread: vi.fn().mockResolvedValue(undefined),
     postReply: vi.fn().mockResolvedValue(undefined),
     getFileAtRef: vi.fn().mockResolvedValue(null),
+    submitApprovalReview: vi.fn().mockResolvedValue(undefined),
+    countOpenBotFindings: vi.fn().mockResolvedValue(0),
   } as unknown as GitHubClient;
 }
 
@@ -102,7 +104,7 @@ describe('FeedbackHandler', () => {
       expect(client.postReply).not.toHaveBeenCalled();
     });
 
-    it('should exit silently when the comment body has no slash command', async () => {
+    it('should exit silently when the comment body has no @botai command', async () => {
       // Arrange
       const config = makeConfig();
       const client = makeGitHubClient();
@@ -115,87 +117,67 @@ describe('FeedbackHandler', () => {
       expect(client.postReply).not.toHaveBeenCalled();
     });
 
-    it('should exit silently when the comment is not a reply (inReplyToId is null)', async () => {
+    it('should exit silently when @botai resolved is sent but inReplyToId is null', async () => {
       // Arrange
       const config = makeConfig();
       const client = makeGitHubClient();
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ inReplyToId: null }));
+      await handler.handle(makeFeedbackEvent({ inReplyToId: null, commentBody: '@botai resolved' }));
 
       // Assert
       expect(client.postReply).not.toHaveBeenCalled();
     });
+  });
 
-    it('should post an explanation reply when /explain is received', async () => {
-      // Arrange
-      const config = makeConfig();
-      const client = makeGitHubClient();
-      const llmCall = vi.fn().mockResolvedValue('This is the explanation.');
-      const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
-
-      // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: '/explain' }));
-
-      // Assert
-      expect(llmCall).toHaveBeenCalledOnce();
-      expect(client.postReply).toHaveBeenCalledOnce();
-      const replyArgs = vi.mocked(client.postReply).mock.calls[0][0];
-      expect(replyArgs.body).toBe('This is the explanation.');
-    });
-
-    it('should resolve the thread and post dismissal message when /dismiss is received', async () => {
+  describe('@botai approved', () => {
+    it('should post a reply and submit an approval review', async () => {
       // Arrange
       const config = makeConfig();
       const client = makeGitHubClient();
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: '/dismiss' }));
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai approved', inReplyToId: 100 }));
 
       // Assert
-      expect(client.editComment).toHaveBeenCalledOnce();
-      expect(client.resolveThread).toHaveBeenCalledOnce();
       expect(client.postReply).toHaveBeenCalledOnce();
       const replyArgs = vi.mocked(client.postReply).mock.calls[0][0];
       expect(replyArgs.body).toContain('dev-user');
+      expect(client.submitApprovalReview).toHaveBeenCalledOnce();
     });
 
-    it('should not dismiss when allowDismiss is false', async () => {
+    it('should work even when inReplyToId is null', async () => {
       // Arrange
-      const config = makeConfig({ feedback: { enabled: true, allowDismiss: false } });
+      const config = makeConfig();
       const client = makeGitHubClient();
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: '/dismiss' }));
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai approved', inReplyToId: null }));
 
       // Assert
-      expect(client.resolveThread).not.toHaveBeenCalled();
-      expect(client.editComment).not.toHaveBeenCalled();
       expect(client.postReply).toHaveBeenCalledOnce();
-      const replyArgs = vi.mocked(client.postReply).mock.calls[0][0];
-      expect(replyArgs.body).toContain('deshabilitado');
+      expect(client.submitApprovalReview).toHaveBeenCalledOnce();
     });
 
-    it('should post an error reply when the LLM call fails during /explain', async () => {
+    it('should detect @botai approved case-insensitively', async () => {
       // Arrange
       const config = makeConfig();
       const client = makeGitHubClient();
-      const llmCall = vi.fn().mockRejectedValue(new Error('OpenAI timeout'));
-      const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: '/explain' }));
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai APPROVED', inReplyToId: null }));
 
       // Assert
-      expect(client.postReply).toHaveBeenCalledOnce();
-      const replyArgs = vi.mocked(client.postReply).mock.calls[0][0];
-      expect(replyArgs.body).toContain('No se pudo generar');
+      expect(client.submitApprovalReview).toHaveBeenCalledOnce();
     });
+  });
 
-    it('should call handleFeedbackEvaluation when reply is free-form text', async () => {
+  describe('@botai review', () => {
+    it('should call LLM with the text between """ and post the reply', async () => {
       // Arrange
       const config = makeConfig();
       const client = {
@@ -206,69 +188,49 @@ describe('FeedbackHandler', () => {
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: 'Ya lo arreglé en el commit anterior' }));
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai review """Agregué validación en la línea 42."""' }));
 
       // Assert
       expect(llmCall).toHaveBeenCalledOnce();
+      const promptArg = vi.mocked(llmCall).mock.calls[0][0] as string;
+      expect(promptArg).toContain('Agregué validación en la línea 42.');
       expect(client.postReply).toHaveBeenCalledOnce();
     });
-  });
 
-  describe('handleFeedbackEvaluation', () => {
-    it('should post reply and resolve thread when decision is resolved', async () => {
+    it('should resolve thread when LLM decision is resolved', async () => {
       // Arrange
       const config = makeConfig();
       const client = {
         ...makeGitHubClient(),
         getFileAtRef: vi.fn().mockResolvedValue('const fixed = true;\n'),
       } as unknown as GitHubClient;
-      const llmCall = vi.fn().mockResolvedValue(JSON.stringify({ decision: 'resolved', reply: 'Gracias, el hallazgo fue resuelto.' }));
+      const llmCall = vi.fn().mockResolvedValue(JSON.stringify({ decision: 'resolved', reply: 'Resuelto.' }));
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: 'Lo arreglé', headSha: 'abc123' }));
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai review """Fix aplicado."""', headSha: 'abc123' }));
 
       // Assert
       expect(client.editComment).toHaveBeenCalledOnce();
       expect(client.resolveThread).toHaveBeenCalledOnce();
-      expect(client.postReply).toHaveBeenCalledOnce();
-      const replyArgs = vi.mocked(client.postReply).mock.calls[0][0];
-      expect(replyArgs.body).toBe('Gracias, el hallazgo fue resuelto.');
     });
 
-    it('should post reply only when decision is maintained', async () => {
+    it('should not edit comment when LLM decision is maintained', async () => {
       // Arrange
       const config = makeConfig();
       const client = {
         ...makeGitHubClient(),
         getFileAtRef: vi.fn().mockResolvedValue(null),
       } as unknown as GitHubClient;
-      const llmCall = vi.fn().mockResolvedValue(JSON.stringify({ decision: 'maintained', reply: 'El hallazgo persiste.' }));
+      const llmCall = vi.fn().mockResolvedValue(JSON.stringify({ decision: 'maintained', reply: 'Persiste.' }));
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: 'No creo que sea un problema' }));
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai review """No aplica."""' }));
 
       // Assert
-      expect(client.postReply).toHaveBeenCalledOnce();
       expect(client.editComment).not.toHaveBeenCalled();
       expect(client.resolveThread).not.toHaveBeenCalled();
-    });
-
-    it('should return silently when parent comment has no finding metadata', async () => {
-      // Arrange
-      const config = makeConfig();
-      const client = makeGitHubClient(null);
-      (client.getFileAtRef as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue(null);
-      const llmCall = vi.fn();
-      const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
-
-      // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: 'respuesta libre' }));
-
-      // Assert
-      expect(llmCall).not.toHaveBeenCalled();
-      expect(client.postReply).not.toHaveBeenCalled();
     });
 
     it('should return silently when LLM returns invalid JSON', async () => {
@@ -276,13 +238,13 @@ describe('FeedbackHandler', () => {
       const config = makeConfig();
       const client = {
         ...makeGitHubClient(),
-        getFileAtRef: vi.fn().mockResolvedValue('code here'),
+        getFileAtRef: vi.fn().mockResolvedValue(null),
       } as unknown as GitHubClient;
-      const llmCall = vi.fn().mockResolvedValue('not json at all');
+      const llmCall = vi.fn().mockResolvedValue('not json');
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: 'algo' }));
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai review """text"""' }));
 
       // Assert
       expect(client.postReply).not.toHaveBeenCalled();
@@ -291,7 +253,7 @@ describe('FeedbackHandler', () => {
     it('should use HEAD as fallback ref when headSha is absent', async () => {
       // Arrange
       const config = makeConfig();
-      const mockGetFileAtRef = vi.fn().mockResolvedValue('file content');
+      const mockGetFileAtRef = vi.fn().mockResolvedValue('code');
       const client = {
         ...makeGitHubClient(),
         getFileAtRef: mockGetFileAtRef,
@@ -300,11 +262,103 @@ describe('FeedbackHandler', () => {
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: 'feedback', headSha: undefined }));
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai review """fix"""', headSha: undefined }));
 
       // Assert
       const callArgs = mockGetFileAtRef.mock.calls[0][0] as { ref: string };
       expect(callArgs.ref).toBe('HEAD');
+    });
+
+    it('should return silently when parent comment has no finding metadata', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient(null);
+      const llmCall = vi.fn();
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai review """text"""' }));
+
+      // Assert
+      expect(llmCall).not.toHaveBeenCalled();
+      expect(client.postReply).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('@botai resolved', () => {
+    it('should post a reply, update metadata, and resolve the thread', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient();
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai resolved' }));
+
+      // Assert
+      expect(client.postReply).toHaveBeenCalledOnce();
+      expect(client.editComment).toHaveBeenCalledOnce();
+      expect(client.resolveThread).toHaveBeenCalledOnce();
+    });
+
+    it('should include the actor name in the reply', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient();
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ actor: 'lucasgio', commentBody: '@botai resolved' }));
+
+      // Assert
+      const replyArgs = vi.mocked(client.postReply).mock.calls[0][0];
+      expect(replyArgs.body).toContain('lucasgio');
+    });
+
+    it('should approve the PR when no open bot findings remain after resolution', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = {
+        ...makeGitHubClient(),
+        countOpenBotFindings: vi.fn().mockResolvedValue(0),
+      } as unknown as GitHubClient;
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai resolved' }));
+
+      // Assert
+      expect(client.submitApprovalReview).toHaveBeenCalledOnce();
+    });
+
+    it('should NOT approve the PR when open bot findings still remain', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = {
+        ...makeGitHubClient(),
+        countOpenBotFindings: vi.fn().mockResolvedValue(2),
+      } as unknown as GitHubClient;
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai resolved' }));
+
+      // Assert
+      expect(client.submitApprovalReview).not.toHaveBeenCalled();
+    });
+
+    it('should return silently when parent comment has no finding metadata', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient(null);
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(makeFeedbackEvent({ commentBody: '@botai resolved' }));
+
+      // Assert
+      expect(client.editComment).not.toHaveBeenCalled();
+      expect(client.postReply).not.toHaveBeenCalled();
     });
   });
 });
