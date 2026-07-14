@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { Octokit } from '@octokit/rest';
 import { graphql } from '@octokit/graphql';
+import { ProjectContextStore } from './project-context.js';
 import { FindingStatus } from './types.js';
 import type {
   ChangedFile,
@@ -89,6 +90,7 @@ interface DismissReviewOptions {
 export class GitHubClient {
   private readonly octokit: Octokit;
   private readonly graphqlWithAuth: typeof graphql;
+  private readonly contextStore = new ProjectContextStore();
 
   constructor(options: GitHubClientOptions = {}) {
     const token = options.token ?? process.env.GITHUB_TOKEN;
@@ -528,6 +530,72 @@ export class GitHubClient {
     }
   }
 
+  private async findContextCommentMeta(args: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+  }): Promise<{ id: number; body: string } | null> {
+    try {
+      const { data } = await this.octokit.issues.listComments({
+        owner: args.owner,
+        repo: args.repo,
+        issue_number: args.pullNumber,
+        per_page: 100,
+      });
+      for (let i = data.length - 1; i >= 0; i--) {
+        const comment = data[i];
+        if (comment?.body?.includes('<!-- ai-review-context:')) {
+          return { id: comment.id, body: comment.body };
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Reads the set of dismissed-finding fingerprints from the context comment (Axis 2). */
+  async readSuppressedFingerprints(args: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+  }): Promise<ReadonlySet<string>> {
+    const meta = await this.findContextCommentMeta(args);
+    if (!meta) return new Set();
+    const context = this.contextStore.deserialize(meta.body);
+    return new Set(context?.suppressedFingerprints ?? []);
+  }
+
+  /** Appends a fingerprint to the suppression list so it is never re-posted (Axis 2). */
+  async addSuppressedFingerprint(args: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    fingerprint: string;
+  }): Promise<void> {
+    const meta = await this.findContextCommentMeta(args);
+    if (!meta) return;
+    const context = this.contextStore.deserialize(meta.body);
+    if (!context) return;
+
+    const current = new Set(context.suppressedFingerprints ?? []);
+    if (current.has(args.fingerprint)) return;
+    current.add(args.fingerprint);
+
+    const updated = { ...context, suppressedFingerprints: [...current] };
+    try {
+      await this.octokit.issues.updateComment({
+        owner: args.owner,
+        repo: args.repo,
+        comment_id: meta.id,
+        body: this.contextStore.serialize(updated),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[warn] No se pudo actualizar la lista de findings descartados:', msg);
+    }
+  }
+
   async postPullRequestComment(args: {
     owner: string;
     repo: string;
@@ -841,15 +909,31 @@ function severityEmoji(severity: ReviewFinding['severity']): string {
   }
 }
 
+/**
+ * Position-independent fingerprint for a finding (Axis 2). Hashes the file,
+ * category and the normalized code the finding refers to, so the same issue
+ * keeps its identity even when its line shifts or its title is reworded.
+ * Falls back to the title when the model did not return a `codeRef`.
+ */
+export function computeFindingFingerprint(f: ReviewFinding): string {
+  const basis = normalizeCodeRef(f.codeRef) || f.title.trim().toLowerCase();
+  return createHash('sha1')
+    .update(`${f.file}:${f.category}:${basis}`)
+    .digest('hex')
+    .slice(0, 12);
+}
+
+function normalizeCodeRef(codeRef: string | undefined): string {
+  if (!codeRef) return '';
+  return codeRef.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 export function buildFindingMetadata(
   f: ReviewFinding,
   commentId: number,
   threadNodeId: string,
 ): FindingMetadata {
-  const id = createHash('sha1')
-    .update(`${f.file}:${f.line}:${f.title}`)
-    .digest('hex')
-    .slice(0, 12);
+  const id = computeFindingFingerprint(f);
 
   return {
     id,
@@ -872,9 +956,13 @@ function formatInlineCommentBody(f: ReviewFinding, metadata: FindingMetadata): s
   if (f.suggestion) {
     lines.push('', '**Sugerencia:**', '', f.suggestion);
   }
+  lines.push('', ACTIONS_FOOTER);
   lines.push(`\n<!-- ai-review-finding:${JSON.stringify(metadata)} -->`);
   return lines.join('\n');
 }
+
+const ACTIONS_FOOTER =
+  '<sub>Respondé en este hilo: `@botai resolved` para cerrar · `@botai dismiss` si es falso positivo · `@botai explain` para más detalle.</sub>';
 
 function composeSummary(summary: string, orphans: ReviewFinding[]): string {
   const parts = ['## 🤖 AI Code Review', '', summary];

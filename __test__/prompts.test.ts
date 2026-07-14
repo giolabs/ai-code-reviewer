@@ -195,7 +195,7 @@ describe('PromptBuilder', () => {
       const result = builder.buildIncrementalSystemPrompt({ config, tech: 'typescript', mergedRulesText: '' });
 
       // Assert
-      expect(result).toContain('INCREMENTAL re-review');
+      expect(result).toContain('INCREMENTAL, VERIFY-ONLY re-review');
     });
 
     it('should NOT contain the full-review opening sentence', () => {

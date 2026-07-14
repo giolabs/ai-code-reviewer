@@ -2,7 +2,15 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import type { ReviewerConfig, CheckCategory, FeedbackConfig, AutoApproveConfig } from './types.js';
+import type {
+  ReviewerConfig,
+  CheckCategory,
+  FeedbackConfig,
+  AutoApproveConfig,
+  SelfCritiqueConfig,
+  ProjectContextConfig,
+  OfficialDocsConfig,
+} from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -50,6 +58,26 @@ export const DEFAULT_CONFIG: ReviewerConfig = {
   inlineComments: true,
   summaryComment: true,
   maxInlineComments: 20,
+  selfCritique: {
+    enabled: true,
+    confidenceThreshold: 0.6,
+  },
+  projectContext: {
+    claudeMd: true,
+    docsGlobs: [
+      'CLAUDE.md',
+      'docs/**/architecture*.md',
+      'docs/**/adr/**/*.md',
+      'docs/**/*-rules*.md',
+      'docs/**/conventions*.md',
+      'docs/**/domain*.md',
+    ],
+    maxChars: 8_000,
+  },
+  officialDocs: {
+    enabled: false,
+    provider: 'none',
+  },
 };
 
 export const CONFIG_FILENAMES = [
@@ -118,11 +146,31 @@ export class ConfigLoader {
         }
       : undefined;
 
+    const selfCritique: SelfCritiqueConfig = {
+      enabled: parsed.selfCritique?.enabled ?? DEFAULT_CONFIG.selfCritique!.enabled,
+      confidenceThreshold:
+        parsed.selfCritique?.confidenceThreshold ?? DEFAULT_CONFIG.selfCritique!.confidenceThreshold,
+    };
+
+    const projectContext: ProjectContextConfig = {
+      claudeMd: parsed.projectContext?.claudeMd ?? DEFAULT_CONFIG.projectContext!.claudeMd,
+      docsGlobs: parsed.projectContext?.docsGlobs ?? DEFAULT_CONFIG.projectContext!.docsGlobs,
+      maxChars: parsed.projectContext?.maxChars ?? DEFAULT_CONFIG.projectContext!.maxChars,
+    };
+
+    const officialDocs: OfficialDocsConfig = {
+      enabled: parsed.officialDocs?.enabled ?? DEFAULT_CONFIG.officialDocs!.enabled,
+      provider: parsed.officialDocs?.provider ?? DEFAULT_CONFIG.officialDocs!.provider,
+    };
+
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
       checks,
       ignore: parsed.ignore ?? DEFAULT_CONFIG.ignore,
+      selfCritique,
+      projectContext,
+      officialDocs,
       ...(feedback !== undefined ? { feedback } : {}),
       ...(autoApprove !== undefined ? { autoApprove } : {}),
     };

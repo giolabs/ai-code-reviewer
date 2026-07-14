@@ -1,0 +1,60 @@
+# Reviewer Maturity (8 ejes)
+
+Estas opciones maduran la certeza y el costo del review. Todas viven en `.ai-review.yml`.
+
+## Auto-verificación (self-critique)
+
+Un segundo pase adversarial refuta los findings débiles antes de postearlos y
+descarta los de baja confianza y baja severidad. Reduce falsos positivos.
+
+```yaml
+selfCritique:
+  enabled: true          # activado por defecto
+  confidenceThreshold: 0.6  # findings con confidence < 0.6 y severidad <= minor se descartan
+```
+
+## Contexto del proyecto (CLAUDE.md + docs/)
+
+El reviewer lee `CLAUDE.md` y los documentos de arquitectura de `docs/` como
+**autoridad por encima** de las reglas genéricas del stack. Un finding que
+contradice tus decisiones documentadas no se reporta; una violación de ellas es
+de alta prioridad.
+
+```yaml
+projectContext:
+  claudeMd: true
+  docsGlobs:
+    - 'CLAUDE.md'
+    - 'docs/**/architecture*.md'
+    - 'docs/**/adr/**/*.md'
+    - 'docs/**/*-rules*.md'
+  maxChars: 8000
+```
+
+## Documentación oficial del stack (opt-in)
+
+Deshabilitado por defecto. Con `context7` habilitado, inyecta doc oficial
+version-específica de las librerías tocadas por el diff. Es **fail-open**: si el
+proveedor falla, el review continúa sin doc y nunca rompe el CI. Requiere el
+secret `CONTEXT7_API_KEY`.
+
+```yaml
+officialDocs:
+  enabled: false
+  provider: none   # 'context7' para activarlo
+```
+
+## Descartar findings con `@botai`
+
+En cada comentario inline podés responder:
+
+- `@botai resolved` — cierra el hallazgo.
+- `@botai dismiss` — falso positivo: lo cierra **y no se vuelve a reportar** en pushes posteriores.
+- `@botai explain` — pide una explicación más detallada y un fix concreto.
+- `@botai approved` — (desde un comentario general) aprueba el PR manualmente.
+
+## Ahorro de CI
+
+El workflow de ejemplo usa `concurrency` con `cancel-in-progress` (corre solo el
+último push) y `paths-ignore` (no dispara en cambios de docs/lockfiles). Ver
+`examples/.github/workflows/ai-review.yml`.

@@ -3,6 +3,25 @@ name: AI Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, review_requested]
+    # Ahorra minutos de runner: no dispara el review en cambios que no son código.
+    # Ajustá esta lista a tu proyecto (agregá/quitá globs según necesites).
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.mdx'
+      - '**/*.lock'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.svg'
+      - 'docs/**'
+
+# Si se pushea varias veces seguidas, cancela los reviews en curso y corre
+# solo el último. Clave para no apilar runs y quemar minutos de CI.
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   review:

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-beta.12
+
+Reviewer maturity — 8 axes (see the **Reviewer Maturity** page):
+
+- **CI cost**: the example workflow now uses `concurrency` with `cancel-in-progress` (only the latest push runs) and `paths-ignore` (docs/lockfiles/images no longer trigger a review).
+- **Fewer false positives**: findings now use a **position-independent fingerprint** (`file + category + normalized code`), so they are not re-reported when a line shifts or the title is reworded. Dismissed findings are stored in a suppression list and never re-posted.
+- **No comment trickle**: incremental re-reviews are now strictly **verify-only** (only new `critical`/`major` issues introduced by the push); the full first run stays exhaustive.
+- **Self-critique**: an adversarial verification pass refutes weak findings and drops low-confidence, low-severity ones before posting. New `selfCritique` config (on by default). New `codeRef` and `confidence` fields per finding.
+- **Bug certainty**: explicit detection checklist (regression, silent failures, tech debt, domain violations, architecture patterns), budgeted full-file context, and mandatory code suggestions for `major`/`critical` findings.
+- **`@botai` actions**: new `@botai dismiss` (mark false positive → suppress permanently) and `@botai explain` (on-demand explanation + fix), plus an actions footer on every inline comment. Resolution checks are now biased toward accepting fixes.
+- **Project grounding**: the reviewer reads `CLAUDE.md` + `docs/` as authority above the generic stack rules (new `projectContext` config).
+- **Official stack docs**: version detection from `package.json` (offline) plus an opt-in, fail-open Context7 provider skeleton (new `officialDocs` config, disabled by default).
+
 ## 0.1.0-beta.10
 
 - **`@botai` command system**: replaces `/explain` and `/dismiss` with structured `@botai approved | review | resolved` commands in inline PR comment threads.

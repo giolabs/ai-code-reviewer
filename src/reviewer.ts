@@ -10,9 +10,12 @@ import { OutputFormatter } from './output.js';
 import { DependencyGraphIndexer } from './dependency-indexer.js';
 import { createLLMAdapter } from './llm/factory.js';
 import { ReviewJsonParser } from './llm/json-parser.js';
+import { ProjectKnowledgeDigest } from './project-knowledge.js';
+import { FindingVerifier } from './finding-verifier.js';
 import {
   GitHubClient,
   buildDiffLineMap,
+  computeFindingFingerprint,
   getPullRequestContextFromEnv,
   getPushEventShasFromEnv,
 } from './github.js';
@@ -23,6 +26,7 @@ import type {
   ChangedFile,
   ReviewerConfig,
   ReviewResult,
+  ReviewFinding,
   TechStack,
   PullRequestContext,
   PushEventShas,
@@ -76,7 +80,14 @@ function resolveConfig(opts: ReviewerCliOptions) {
     enabledChecks: config.checks,
   });
 
-  return { config, configLoader, mergedRulesText, tech, resolvedModel, cwd, appCwd };
+  let projectDigest: string | undefined;
+  if (config.projectContext) {
+    const knowledge = new ProjectKnowledgeDigest({ cwd: appCwd });
+    const built = knowledge.build({ config: config.projectContext });
+    projectDigest = built.digest || undefined;
+  }
+
+  return { config, configLoader, mergedRulesText, tech, resolvedModel, cwd, appCwd, projectDigest };
 }
 
 function logHeader(tech: string, provider: string, model: string, language: string): void {
@@ -127,9 +138,10 @@ async function runIncrementalReview(args: {
   mergedRulesText: string;
   tech: TechStack;
   resolvedModel: string;
+  projectDigest?: string;
   opts: ReviewerCliOptions;
 }): Promise<ReviewPRResult | null | false> {
-  const { ctx, config, pushShas, priorFindings, githubClient, mergedRulesText, tech, resolvedModel, opts } = args;
+  const { ctx, config, pushShas, priorFindings, githubClient, mergedRulesText, tech, resolvedModel, projectDigest, opts } = args;
 
   let incrementalFiles: ChangedFile[] = [];
   try {
@@ -168,7 +180,7 @@ async function runIncrementalReview(args: {
 
   if (filtered.length > 0) {
     const promptBuilder = new PromptBuilder();
-    const systemPrompt = promptBuilder.buildIncrementalSystemPrompt({ config, tech, mergedRulesText });
+    const systemPrompt = promptBuilder.buildIncrementalSystemPrompt({ config, tech, mergedRulesText, projectDigest });
     const userPrompt = promptBuilder.buildIncrementalUserPrompt({
       files: filtered,
       priorFindings,
@@ -206,6 +218,16 @@ async function runIncrementalReview(args: {
     commitSha: ctx.headSha,
     summaryCommentId,
   });
+
+  if (result && result.findings.length > 0) {
+    result.findings = await filterSuppressedFindings({
+      githubClient,
+      owner: ctx.owner,
+      repo: ctx.repo,
+      pullNumber: ctx.pullNumber,
+      findings: result.findings,
+    });
+  }
 
   if (!result || result.findings.length === 0) {
     if (filtered.length > 0) {
@@ -248,7 +270,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     );
   }
 
-  const { config, mergedRulesText, tech: detectedTech, resolvedModel, appCwd } = resolveConfig(opts);
+  const { config, mergedRulesText, tech: detectedTech, resolvedModel, appCwd, projectDigest } = resolveConfig(opts);
   const formatter = new OutputFormatter();
 
   const pushShas = getPushEventShasFromEnv();
@@ -289,7 +311,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
       logHeader(tech, config.provider, resolvedModel, config.language);
 
       const incrementalResult = await runIncrementalReview({
-        ctx, config, pushShas, priorFindings, githubClient, mergedRulesText, tech, resolvedModel, opts,
+        ctx, config, pushShas, priorFindings, githubClient, mergedRulesText, tech, resolvedModel, projectDigest, opts,
       });
 
       // false → Compare API error; fall through to full review.
@@ -342,6 +364,8 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     if (process.env.DEBUG) console.error(chalk.dim(`[DEBUG] madge: ${buildResult.detail}`));
   }
 
+  await loadFileContentBudgeted({ githubClient, ctx, files: filtered });
+
   const result = await callLLM({
     files: filtered,
     prTitle: ctx.title,
@@ -351,6 +375,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     tech,
     resolvedModel,
     dependencyIndex,
+    projectDigest,
   });
 
   result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
@@ -368,7 +393,25 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     return { recommendation: result.recommendation, findingsCount: result.findings.length };
   }
 
+  const beforeSuppression = result.findings.length;
+  result.findings = await filterSuppressedFindings({
+    githubClient,
+    owner: ctx.owner,
+    repo: ctx.repo,
+    pullNumber: ctx.pullNumber,
+    findings: result.findings,
+  });
+  const suppressed = beforeSuppression - result.findings.length;
+  if (suppressed > 0) {
+    console.log(chalk.dim(`${suppressed} finding(s) omitidos por estar en la lista de descartados.`));
+  }
+
   const diffLineMap = buildDiffLineMap(filtered);
+  console.log(
+    chalk.dim(
+      `Posteando ${result.findings.length} finding(s) — inline hasta ${config.maxInlineComments}, el resto en el resumen.`,
+    ),
+  );
 
   let event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE';
   if (shouldAutoApprove(result, config)) {
@@ -627,11 +670,18 @@ async function callLLM(args: {
   tech: TechStack;
   resolvedModel: string;
   dependencyIndex?: string;
+  projectDigest?: string;
 }): Promise<ReviewResult> {
-  const { files, prTitle, prBody, config, mergedRulesText, tech, resolvedModel, dependencyIndex } = args;
+  const { files, prTitle, prBody, config, mergedRulesText, tech, resolvedModel, dependencyIndex, projectDigest } = args;
 
   const promptBuilder = new PromptBuilder();
-  const systemPrompt = promptBuilder.buildSystemPrompt({ config, tech, mergedRulesText, dependencyIndex });
+  const systemPrompt = promptBuilder.buildSystemPrompt({
+    config,
+    tech,
+    mergedRulesText,
+    dependencyIndex,
+    projectDigest,
+  });
   const userPrompt = promptBuilder.buildUserPrompt({ files, prTitle, prBody });
 
   const llmConfig: LLMConfig = {
@@ -651,7 +701,70 @@ async function callLLM(args: {
   const parser = new ReviewJsonParser();
   const parsed = parser.parse(response.content);
 
+  if (config.selfCritique?.enabled && parsed.findings.length > 0) {
+    console.log(chalk.dim(`Pase de auto-verificación sobre ${parsed.findings.length} finding(s)...`));
+    const verifier = new FindingVerifier({ adapter });
+    const before = parsed.findings.length;
+    parsed.findings = await verifier.verify({
+      findings: parsed.findings,
+      diffText: userPrompt,
+      confidenceThreshold: config.selfCritique.confidenceThreshold,
+    });
+    const dropped = before - parsed.findings.length;
+    if (dropped > 0) {
+      console.log(chalk.dim(`Auto-verificación: ${dropped} finding(s) descartados por baja evidencia/confianza.`));
+    }
+  }
+
   return { ...parsed, tokensUsed: response.tokensUsed };
+}
+
+/**
+ * Loads the full post-change content of small/medium changed files (budgeted)
+ * so the model sees context beyond the diff (Axis 5). Mutates `content` on the
+ * local file objects.
+ */
+async function loadFileContentBudgeted(args: {
+  githubClient: GitHubClient;
+  ctx: PullRequestContext;
+  files: ReadonlyArray<ChangedFile>;
+}): Promise<void> {
+  const MAX_FILES = 15;
+  const MAX_CHANGES = 400;
+  const MAX_BYTES = 40_000;
+  let loaded = 0;
+
+  for (const file of args.files) {
+    if (loaded >= MAX_FILES) break;
+    if (file.status === 'removed' || !file.patch) continue;
+    if (file.additions + file.deletions > MAX_CHANGES) continue;
+
+    const content = await args.githubClient.getFileContent(args.ctx, file.path, args.ctx.headSha);
+    if (content && content.length <= MAX_BYTES) {
+      file.content = content;
+      loaded++;
+    }
+  }
+}
+
+/**
+ * Removes findings the developer has dismissed as false positives (Axis 2),
+ * matched by their position-independent fingerprint.
+ */
+async function filterSuppressedFindings(args: {
+  githubClient: GitHubClient;
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  findings: ReadonlyArray<ReviewFinding>;
+}): Promise<ReviewFinding[]> {
+  const suppressed = await args.githubClient.readSuppressedFingerprints({
+    owner: args.owner,
+    repo: args.repo,
+    pullNumber: args.pullNumber,
+  });
+  if (suppressed.size === 0) return args.findings.slice();
+  return args.findings.filter((f) => !suppressed.has(computeFindingFingerprint(f)));
 }
 
 function parseLocalDiff(rawDiff: string): ChangedFile[] {

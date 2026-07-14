@@ -69,6 +69,12 @@ export interface ReviewerConfig {
   feedback?: FeedbackConfig;
   /** Auto-approve when model recommends approve with no blocking findings (opt-in) */
   autoApprove?: AutoApproveConfig;
+  /** Adversarial self-critique pass over first-run findings (opt-in, on by default) */
+  selfCritique?: SelfCritiqueConfig;
+  /** Read CLAUDE.md + docs/ as project-grounding authority (opt-in, on by default) */
+  projectContext?: ProjectContextConfig;
+  /** Official stack docs grounding (opt-in, disabled by default) */
+  officialDocs?: OfficialDocsConfig;
   /**
    * Subdirectory (relative to repo root) where the app's package.json lives.
    * Use this in monorepos where the app is not at the repository root.
@@ -96,6 +102,14 @@ export interface ReviewFinding {
   description: string;
   /** Fix suggestion (optional, markdown/code block format) */
   suggestion?: string;
+  /**
+   * Exact code snippet the finding refers to (right side of the diff).
+   * Used to build a position-independent fingerprint so a finding is not
+   * re-reported when its line shifts or its title is reworded.
+   */
+  codeRef?: string;
+  /** Model confidence that the finding is real, 0 (guess) to 1 (certain). */
+  confidence?: number;
 }
 
 /**
@@ -162,7 +176,7 @@ export enum FindingStatus {
   Resolved = 'resolved',
 }
 
-export type BotCommand = 'approved' | 'review' | 'resolved' | 'unknown';
+export type BotCommand = 'approved' | 'review' | 'resolved' | 'dismiss' | 'explain' | 'unknown';
 
 export interface BotCommandParseResult {
   command: BotCommand;
@@ -192,6 +206,41 @@ export interface AutoApproveConfig {
   enabled: boolean;
   /** Minimum overallScore (0–10) required to auto-approve. Ignored when score is absent. */
   minScore: number;
+}
+
+/**
+ * Adversarial verification pass configuration (Axis 4).
+ * A second LLM call tries to refute each first-pass finding; non-survivors
+ * and low-confidence low-severity findings are dropped before posting.
+ */
+export interface SelfCritiqueConfig {
+  enabled: boolean;
+  /** Findings below this confidence AND at/below `minor` severity are dropped (0–1). */
+  confidenceThreshold: number;
+}
+
+/**
+ * Project grounding configuration (Axis 7).
+ * Reads CLAUDE.md and selected docs/ files as authority above generic rules.
+ */
+export interface ProjectContextConfig {
+  /** Read root/nested CLAUDE.md files. */
+  claudeMd: boolean;
+  /** Globs (relative to repo root) of docs to include in the knowledge digest. */
+  docsGlobs: string[];
+  /** Maximum characters of the assembled digest injected into the prompt. */
+  maxChars: number;
+}
+
+export type OfficialDocsProviderName = 'none' | 'context7';
+
+/**
+ * Official stack docs grounding configuration (Axis 8B).
+ * Disabled by default; fail-open when the provider is unavailable.
+ */
+export interface OfficialDocsConfig {
+  enabled: boolean;
+  provider: OfficialDocsProviderName;
 }
 
 export type FeedbackEvaluationDecision = 'resolved' | 'maintained';
@@ -279,6 +328,11 @@ export interface ProjectContext {
   reviewerVersion: string;
   /** ISO 8601 timestamp of detection */
   detectedAt: string;
+  /**
+   * Fingerprints of findings the developer dismissed as false positives.
+   * These are never re-posted on any later push (Axis 2).
+   */
+  suppressedFingerprints?: string[];
 }
 
 /**

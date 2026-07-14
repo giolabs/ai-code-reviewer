@@ -48,11 +48,18 @@ export class ProjectContextStore {
       return null;
     }
 
+    const suppressed = Array.isArray(obj['suppressedFingerprints'])
+      ? (obj['suppressedFingerprints'] as unknown[]).filter(
+          (item): item is string => typeof item === 'string',
+        )
+      : undefined;
+
     return {
       tech: obj['tech'] as ProjectContext['tech'],
       appDir: typeof obj['appDir'] === 'string' ? obj['appDir'] : undefined,
       reviewerVersion: obj['reviewerVersion'],
       detectedAt: obj['detectedAt'],
+      ...(suppressed !== undefined ? { suppressedFingerprints: suppressed } : {}),
     };
   }
 

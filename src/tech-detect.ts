@@ -51,6 +51,38 @@ export class TechDetector {
     return 'node';
   }
 
+  /**
+   * Reads the installed major version of the primary framework for the given
+   * stack from `package.json`. Returns null for non-JS stacks or when absent.
+   * Deterministic and offline (Axis 8A).
+   */
+  detectStackVersion(tech: TechStack): string | null {
+    const primaryDep: Partial<Record<TechStack, string>> = {
+      nextjs: 'next',
+      nestjs: '@nestjs/core',
+      react: 'react',
+      typescript: 'typescript',
+    };
+    const dep = primaryDep[tech];
+    if (!dep) return null;
+
+    const pkgPath = resolve(this.cwd, 'package.json');
+    if (!existsSync(pkgPath)) return null;
+
+    let pkg: PackageJson;
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as PackageJson;
+    } catch {
+      return null;
+    }
+
+    const range = pkg.dependencies?.[dep] ?? pkg.devDependencies?.[dep];
+    if (!range) return null;
+
+    const major = /(\d+)/.exec(range);
+    return major ? major[1] : null;
+  }
+
   static displayName(tech: TechStack): string {
     const map: Record<TechStack, string> = {
       nestjs: 'NestJS',

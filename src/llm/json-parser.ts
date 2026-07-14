@@ -10,6 +10,8 @@ interface FindingRaw {
   title: unknown;
   description: unknown;
   suggestion: unknown;
+  codeRef: unknown;
+  confidence: unknown;
 }
 
 interface RegressionRiskRaw {
@@ -85,6 +87,8 @@ export class ReviewJsonParser {
       title: (f.title as string) ?? '',
       description: (f.description as string) ?? '',
       suggestion: f.suggestion ? (f.suggestion as string) : undefined,
+      codeRef: typeof f.codeRef === 'string' && f.codeRef ? f.codeRef : undefined,
+      confidence: typeof f.confidence === 'number' ? f.confidence : undefined,
     };
   }
 

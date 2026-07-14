@@ -198,6 +198,29 @@ summaryComment: true
 # Maximum number of inline comments. Extra findings are merged into the summary.
 maxInlineComments: 20
 
+# Adversarial self-critique pass: refutes weak findings and drops low-confidence,
+# low-severity ones before posting (reduces false positives).
+selfCritique:
+  enabled: true
+  confidenceThreshold: 0.6
+
+# Project grounding: read CLAUDE.md + docs/ as authority above the generic rules.
+projectContext:
+  claudeMd: true
+  docsGlobs:
+    - 'CLAUDE.md'
+    - 'docs/**/architecture*.md'
+    - 'docs/**/adr/**/*.md'
+    - 'docs/**/*-rules*.md'
+    - 'docs/**/conventions*.md'
+    - 'docs/**/domain*.md'
+  maxChars: 8000
+
+# Official stack docs grounding (opt-in, fail-open). Requires CONTEXT7_API_KEY.
+officialDocs:
+  enabled: false
+  provider: none   # 'context7' to enable
+
 # Additional instructions appended to the system prompt.
 # customInstructions: |
 #   This project follows strict Clean Architecture. Any import from a domain

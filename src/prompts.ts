@@ -1,11 +1,24 @@
 import type { ChangedFile, ReviewerConfig, TechStack, PriorFinding, FeedbackEvaluationPromptArgs } from './types.js';
 import { TechDetector } from './tech-detect.js';
 
+interface ExplainPromptArgs {
+  findingTitle: string;
+  findingDescription: string;
+  findingFile: string;
+  findingLine: number;
+  fileWindow: string;
+  language: 'es' | 'en';
+}
+
 interface SystemPromptArgs {
   config: ReviewerConfig;
   tech: TechStack;
   mergedRulesText: string;
   dependencyIndex?: string;
+  /** Project-authority digest (CLAUDE.md + docs/) — Axis 7. */
+  projectDigest?: string;
+  /** Official stack docs snippets for libraries touched by the diff — Axis 8. */
+  officialDocs?: string;
 }
 
 interface UserPromptArgs {
@@ -57,6 +70,18 @@ Do NOT report findings below the minimum severity.`,
 ${mergedRulesText || '(no rules — apply general best practices)'}`,
     ];
 
+    if (args.projectDigest) {
+      sections.push(this.buildProjectAuthoritySection(args.projectDigest));
+    }
+
+    if (args.officialDocs) {
+      sections.push(
+        `**Official stack documentation (version-specific, for the libraries touched by this diff):**\n${args.officialDocs}\n\nUse this to judge correct API usage. If the code contradicts this documentation, that is a valid finding.`,
+      );
+    }
+
+    sections.push(this.buildDetectionChecklist());
+
     if (args.dependencyIndex) {
       sections.push(args.dependencyIndex);
       sections.push(
@@ -78,15 +103,46 @@ Both \`anticipatedBugs\` and \`regressionRisks\` can be empty arrays if the chan
 - Only reference lines that are in the diff (lines starting with + in the patch, or immediate context). Inline comments only work there.
 - If the issue is about the file in general (not a specific line), use the first changed line of the file and clarify it in the description.`,
 
+      this.buildOutputRequirements(),
+
       `**Quality over quantity:**
 - If the PR looks good, say so explicitly in the summary and return few findings (or zero).
 - Do not invent problems to "fill" the review.
 - Every finding must have a concrete rationale, not vague statements like "could be improved".
+- A finding must be verifiable using ONLY the diff plus the context provided. Do not infer defects in code you cannot see.
 
 ${langInstruction}`,
     );
 
     return sections.join('\n\n');
+  }
+
+  private buildProjectAuthoritySection(projectDigest: string): string {
+    return [
+      `**Project rules & architecture (HIGHEST AUTHORITY — above the generic stack rules):**`,
+      projectDigest,
+      `How to use this: a finding that contradicts these documents is INVALID and must not be reported. A finding that flags a violation of these documents is HIGH priority. Respect deliberate project conventions (they are not bugs).`,
+    ].join('\n\n');
+  }
+
+  private buildDetectionChecklist(): string {
+    return [
+      `**Detection checklist — reason explicitly through each axis before finalizing findings:**`,
+      `- Regression: for each importer/caller in the dependency context, reason whether a changed signature, return contract, or side effect could break it.`,
+      `- Silent failures: empty \`catch\`, swallowed errors, un-awaited promises, defaults that hide failures, \`?.\` masking an unexpected null, ignored return values.`,
+      `- Technical debt: duplication, tight coupling, and workarounds marked as temporary (report as \`info\`/\`minor\`, category \`maintainability\`).`,
+      `- Domain violations: business logic in the wrong layer, broken invariants, contradictions with the project rules above (category \`architecture\` or \`bug-risk\`).`,
+      `- Architecture patterns: layer-boundary violations (e.g. controller→service→repository), broken dependency inversion, inconsistency with the surrounding module's established pattern (category \`architecture\`).`,
+    ].join('\n');
+  }
+
+  private buildOutputRequirements(): string {
+    return [
+      `**Output requirements per finding:**`,
+      `- \`codeRef\`: paste the exact code snippet (from the new side of the diff) the finding refers to. This anchors the finding so it is not duplicated when lines move.`,
+      `- \`confidence\`: your confidence that the finding is real, from 0 (guess) to 1 (certain). Be honest; low confidence is fine for exploratory notes.`,
+      `- \`suggestion\`: for every finding of severity \`major\` or \`critical\`, provide a concrete fix as a code block. When the fix applies to a single contiguous line range, format it as a GitHub \`suggestion\` block.`,
+    ].join('\n');
   }
 
   /**
@@ -117,7 +173,16 @@ ${langInstruction}`,
       }
 
       const header = `### ${file.path} (${file.status}, +${file.additions}/-${file.deletions})`;
-      const chunk = `${header}\n\`\`\`diff\n${file.patch}\n\`\`\``;
+      let chunk = `${header}\n\`\`\`diff\n${file.patch}\n\`\`\``;
+
+      // Include the full post-change file when provided and within budget, so
+      // silent failures outside the diff (e.g. a swallowed error above) are visible.
+      if (file.content) {
+        const fullBlock = `\n_Full file (post-change) for context:_\n\`\`\`\n${file.content}\n\`\`\``;
+        if (totalChars + chunk.length + fullBlock.length <= maxTotalChars) {
+          chunk += fullBlock;
+        }
+      }
 
       if (totalChars + chunk.length > maxTotalChars) {
         fileChunks.push(
@@ -152,7 +217,9 @@ ${langInstruction}`,
         : 'Always respond in clear, professional English.';
 
     const sections = [
-      `You are performing an INCREMENTAL re-review of a pull request. Your role is to check whether the new push introduces regressions or critical/major issues specifically in the context of the prior open findings listed in the user prompt. Do NOT report issues unrelated to the prior findings unless they are critical or major. Do NOT re-report prior findings — assume they are already tracked.`,
+      `You are performing an INCREMENTAL, VERIFY-ONLY re-review of a pull request. The full review already happened on the first run. Your ONLY job now is:
+1. Report NEW bugs of severity \`critical\` or \`major\` that THIS push introduced in the changed lines.
+2. Nothing else. Do NOT report new \`minor\`, \`info\`, \`nitpick\`, or style observations. Do NOT re-discover pre-existing issues. Do NOT re-report the prior findings (they are already tracked). If the push only adds clean code, return an empty findings array.`,
 
       `**Project stack:** ${TechDetector.displayName(tech)}`,
 
@@ -172,6 +239,10 @@ Do NOT report findings below the minimum severity.`,
 ${mergedRulesText || '(no rules — apply general best practices)'}`,
     ];
 
+    if (args.projectDigest) {
+      sections.push(this.buildProjectAuthoritySection(args.projectDigest));
+    }
+
     if (args.dependencyIndex) {
       sections.push(args.dependencyIndex);
     }
@@ -185,6 +256,8 @@ ${mergedRulesText || '(no rules — apply general best practices)'}`,
 - The \`line\` field must be the line number in the NEW file (right side of the diff).
 - Only reference lines that are in the diff (lines starting with + in the patch, or immediate context). Inline comments only work there.
 - If the issue is about the file in general (not a specific line), use the first changed line of the file and clarify it in the description.`,
+
+      this.buildOutputRequirements(),
 
       `**Quality over quantity:**
 - If the new push looks clean with respect to prior findings and general quality, return an empty findings array and set recommendation to 'comment'.
@@ -280,10 +353,39 @@ ${langInstruction}`,
       fileWindow,
       `\`\`\``,
       ``,
-      `Evaluate: if the finding is genuinely fixed or the developer's argument shows it does not apply, set decision to "resolved". If the finding still applies, set decision to "maintained".`,
+      `Evaluate against the CURRENT file state versus the ORIGINAL problem — not against the exact fix you originally suggested. Be generous, not strict:`,
+      `- If the change reasonably addresses the concern — even if solved differently than suggested — set decision to "resolved".`,
+      `- Only set "maintained" when the original problem is CLEARLY still present and exploitable.`,
+      `- When in doubt, set "resolved" and explain briefly. Do not re-litigate style once the substance is handled.`,
       `Write a short, respectful reply (2-4 sentences) to post in the thread explaining your decision.`,
       langInstruction,
       jsonInstruction,
+    ].join('\n');
+  }
+
+  buildExplainPrompt(args: ExplainPromptArgs): string {
+    const { findingTitle, findingDescription, findingFile, findingLine, fileWindow, language } = args;
+
+    const langInstruction =
+      language === 'es'
+        ? 'Respondé en español rioplatense, claro y didáctico. Devolvé SOLO texto markdown (sin JSON).'
+        : 'Answer in clear, didactic English. Return ONLY markdown text (no JSON).';
+
+    return [
+      `You are a Senior Staff Engineer. A developer asked for a fuller explanation of a code review finding.`,
+      ``,
+      `**Finding:**`,
+      `- File: \`${findingFile}\` (line ${findingLine})`,
+      `- Title: ${findingTitle}`,
+      `- Description: ${findingDescription}`,
+      ``,
+      `**Current file state around line ${findingLine}:**`,
+      `\`\`\``,
+      fileWindow,
+      `\`\`\``,
+      ``,
+      `Explain why this matters, the concrete failure scenario it can cause, and a concrete fix (with a short code snippet when useful). Be practical and specific to the code shown.`,
+      langInstruction,
     ].join('\n');
   }
 

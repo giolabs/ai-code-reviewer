@@ -73,6 +73,10 @@ export class FeedbackHandler {
         parentBody: parentComment.body,
         reviewText: parsed.reviewText ?? '',
       });
+    } else if (parsed.command === 'dismiss') {
+      await this.handleDismiss({ event, metadata, parentBody: parentComment.body });
+    } else if (parsed.command === 'explain') {
+      await this.handleExplain({ event, metadata, parentBody: parentComment.body });
     } else {
       await this.handleResolved({ event, metadata, parentBody: parentComment.body });
     }
@@ -91,10 +95,10 @@ export class FeedbackHandler {
   }
 
   private parseBotCommand(body: string): BotCommandParseResult {
-    const match = /@botai\s+(approved|review|resolved)/i.exec(body);
+    const match = /@botai\s+(approved|review|resolved|dismiss|explain)/i.exec(body);
     if (!match) return { command: 'unknown' };
 
-    const keyword = match[1].toLowerCase() as 'approved' | 'review' | 'resolved';
+    const keyword = match[1].toLowerCase() as Exclude<BotCommandParseResult['command'], 'unknown'>;
 
     if (keyword === 'review') {
       const textMatch = /"""\s*([\s\S]+?)\s*"""/.exec(body);
@@ -216,14 +220,86 @@ export class FeedbackHandler {
     }
   }
 
-  private async markResolved(args: {
+  private async handleDismiss(args: {
     event: FeedbackEvent;
     metadata: FindingMetadata;
     parentBody: string;
   }): Promise<void> {
     const { event, metadata, parentBody } = args;
 
-    const updatedMetadata: FindingMetadata = { ...metadata, status: FindingStatus.Resolved };
+    const replyBody =
+      this.config.language === 'es'
+        ? `Descartado como falso positivo por @${event.actor}. No se volverá a reportar este hallazgo.`
+        : `Dismissed as a false positive by @${event.actor}. This finding will not be reported again.`;
+
+    await this.postReply(event, replyBody);
+    await this.markStatus({ event, metadata, parentBody, status: FindingStatus.Dismissed });
+
+    // metadata.id is the finding fingerprint — suppress it permanently (Axis 2).
+    await this.githubClient.addSuppressedFingerprint({
+      owner: event.owner,
+      repo: event.repo,
+      pullNumber: event.pullNumber,
+      fingerprint: metadata.id,
+    });
+
+    console.log(chalk.dim(`@botai dismiss: finding ${metadata.id} descartado y suprimido.`));
+  }
+
+  private async handleExplain(args: {
+    event: FeedbackEvent;
+    metadata: FindingMetadata;
+    parentBody: string;
+  }): Promise<void> {
+    const { event, metadata, parentBody } = args;
+
+    const fileContent = await this.githubClient.getFileAtRef({
+      owner: event.owner,
+      repo: event.repo,
+      path: metadata.file,
+      ref: event.headSha ?? 'HEAD',
+    });
+    const fileWindow = this.extractLineWindow(fileContent, metadata.line);
+    const findingText = this.extractFindingTextFromBody(parentBody);
+
+    const prompt = this.promptBuilder.buildExplainPrompt({
+      findingTitle: findingText.title,
+      findingDescription: findingText.description,
+      findingFile: metadata.file,
+      findingLine: metadata.line,
+      fileWindow,
+      language: this.config.language,
+    });
+
+    let reply: string;
+    try {
+      reply = (await this.llmCall(prompt)).trim();
+    } catch {
+      return;
+    }
+    if (!reply) return;
+
+    await this.postReply(event, reply.slice(0, 4000));
+    console.log(chalk.dim(`@botai explain: respondido para finding ${metadata.id}.`));
+  }
+
+  private async markResolved(args: {
+    event: FeedbackEvent;
+    metadata: FindingMetadata;
+    parentBody: string;
+  }): Promise<void> {
+    await this.markStatus({ ...args, status: FindingStatus.Resolved });
+  }
+
+  private async markStatus(args: {
+    event: FeedbackEvent;
+    metadata: FindingMetadata;
+    parentBody: string;
+    status: FindingStatus;
+  }): Promise<void> {
+    const { event, metadata, parentBody, status } = args;
+
+    const updatedMetadata: FindingMetadata = { ...metadata, status };
     const updatedBody = this.githubClient.embedFindingMetadata(parentBody, updatedMetadata);
 
     await this.githubClient.editComment({
