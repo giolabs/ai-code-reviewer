@@ -1,24 +1,25 @@
-# Reviewer Maturity (8 ejes)
+# Reviewer Maturity
 
-Estas opciones maduran la certeza y el costo del review. Todas viven en `.ai-review.yml`.
+These options improve review accuracy and cut CI cost. They all live in `.ai-review.yml`.
 
-## Auto-verificación (self-critique)
+## Self-critique
 
-Un segundo pase adversarial refuta los findings débiles antes de postearlos y
-descarta los de baja confianza y baja severidad. Reduce falsos positivos.
+An adversarial second pass refutes weak findings before they are posted, and drops low-confidence, low-severity ones. This reduces false positives. On by default.
 
 ```yaml
 selfCritique:
-  enabled: true          # activado por defecto
-  confidenceThreshold: 0.6  # findings con confidence < 0.6 y severidad <= minor se descartan
+  enabled: true              # enabled by default
+  confidenceThreshold: 0.6   # findings with confidence < 0.6 AND severity <= minor are dropped
 ```
 
-## Contexto del proyecto (CLAUDE.md + docs/)
+Every finding now also carries two fields the model must fill in:
 
-El reviewer lee `CLAUDE.md` y los documentos de arquitectura de `docs/` como
-**autoridad por encima** de las reglas genéricas del stack. Un finding que
-contradice tus decisiones documentadas no se reporta; una violación de ellas es
-de alta prioridad.
+- `codeRef` — the exact code snippet the finding refers to. It anchors the finding so it is **not re-reported** when its line shifts or its title is reworded.
+- `confidence` — the model's confidence the finding is real (0 = guess, 1 = certain).
+
+## Project grounding (CLAUDE.md + docs/)
+
+The reviewer reads `CLAUDE.md` and your architecture documents under `docs/` as **authority above** the generic stack rules. A finding that contradicts your documented decisions is not reported; a violation of them is treated as high priority.
 
 ```yaml
 projectContext:
@@ -28,33 +29,34 @@ projectContext:
     - 'docs/**/architecture*.md'
     - 'docs/**/adr/**/*.md'
     - 'docs/**/*-rules*.md'
+    - 'docs/**/conventions*.md'
+    - 'docs/**/domain*.md'
   maxChars: 8000
 ```
 
-## Documentación oficial del stack (opt-in)
+## Official stack docs (opt-in)
 
-Deshabilitado por defecto. Con `context7` habilitado, inyecta doc oficial
-version-específica de las librerías tocadas por el diff. Es **fail-open**: si el
-proveedor falla, el review continúa sin doc y nunca rompe el CI. Requiere el
-secret `CONTEXT7_API_KEY`.
+Disabled by default. With `context7` enabled, the reviewer injects version-specific official docs for the libraries touched by the diff. It is **fail-open**: if the provider is unavailable, the review continues without docs and never fails CI. Requires the `CONTEXT7_API_KEY` secret.
 
 ```yaml
 officialDocs:
   enabled: false
-  provider: none   # 'context7' para activarlo
+  provider: none   # set to 'context7' to enable
 ```
 
-## Descartar findings con `@botai`
+## Dismissing findings with `@botai`
 
-En cada comentario inline podés responder:
+On every inline comment you can reply in the thread with:
 
-- `@botai resolved` — cierra el hallazgo.
-- `@botai dismiss` — falso positivo: lo cierra **y no se vuelve a reportar** en pushes posteriores.
-- `@botai explain` — pide una explicación más detallada y un fix concreto.
-- `@botai approved` — (desde un comentario general) aprueba el PR manualmente.
+- `@botai resolved` — close the finding.
+- `@botai dismiss` — mark it a false positive: it is closed **and never reported again** on later pushes.
+- `@botai explain` — request a fuller explanation and a concrete fix.
+- `@botai approved` — (from a general PR comment) approve the PR manually.
 
-## Ahorro de CI
+## CI cost
 
-El workflow de ejemplo usa `concurrency` con `cancel-in-progress` (corre solo el
-último push) y `paths-ignore` (no dispara en cambios de docs/lockfiles). Ver
-`examples/.github/workflows/ai-review.yml`.
+The example workflow uses `concurrency` with `cancel-in-progress` (only the latest push runs) and `paths-ignore` (docs and lockfile changes do not trigger a review). See `examples/.github/workflows/ai-review.yml`.
+
+## No comment trickle
+
+The first run is exhaustive — all findings are posted at once (inline where they map, the rest grouped in the summary). Later pushes run a strict **verify-only** re-review: they only report new `critical`/`major` issues the push introduced, and never add new style observations or re-discover pre-existing issues.

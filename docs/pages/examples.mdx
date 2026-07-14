@@ -47,7 +47,7 @@ No `.ai-review.yml` needed — all defaults apply:
 
 ## Full configuration
 
-Enables every feature: incremental re-review, `@botai` inline feedback, auto-approve, custom rules, Anthropic provider, and dependency graph.
+Enables every feature: incremental re-review, `@botai` inline feedback, auto-approve, self-critique, project grounding, custom rules, Anthropic provider, dependency graph, plus CI-saving `concurrency` and `paths-ignore`.
 
 **`.github/workflows/ai-review.yml`**
 
@@ -57,8 +57,19 @@ name: AI Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    # Skip reviews on non-code changes to save runner minutes
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.lock"
+      - "package-lock.json"
+      - "docs/**"
   pull_request_review_comment:
     types: [created]
+
+# Only run the latest push per PR; cancel superseded runs
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   ai-review:
@@ -155,6 +166,7 @@ customInstructions: |
   Treat missing OpenTelemetry spans on public service methods as a minor finding.
 
 # @botai inline feedback commands (requires handle-feedback job above)
+# Threads accept: @botai resolved | dismiss | explain, and @botai approved on a general comment
 feedback:
   enabled: true
 
@@ -162,6 +174,29 @@ feedback:
 autoApprove:
   enabled: true
   minScore: 8
+
+# Adversarial self-critique: refutes weak findings and drops low-confidence,
+# low-severity ones before posting (reduces false positives). On by default.
+selfCritique:
+  enabled: true
+  confidenceThreshold: 0.6
+
+# Project grounding: read CLAUDE.md + docs/ as authority above the generic rules
+projectContext:
+  claudeMd: true
+  docsGlobs:
+    - "CLAUDE.md"
+    - "docs/**/architecture*.md"
+    - "docs/**/adr/**/*.md"
+    - "docs/**/*-rules*.md"
+    - "docs/**/conventions*.md"
+    - "docs/**/domain*.md"
+  maxChars: 8000
+
+# Official stack docs grounding (opt-in, fail-open). Requires CONTEXT7_API_KEY.
+officialDocs:
+  enabled: false
+  provider: none   # set to 'context7' to enable
 ```
 
 import { Callout } from 'nextra/components'
@@ -178,5 +213,9 @@ Replace `ANTHROPIC_API_KEY` with `OPENAI_API_KEY` (and set `provider: openai`) o
 | Custom review rules | `rules: ./code-review-rules.md` | [Custom Rules](./custom-rules) |
 | `@botai` inline commands | `feedback.enabled: true` + `handle-feedback` job | [Inline Feedback](./handle-feedback) |
 | Auto-approve clean PRs | `autoApprove.enabled: true` + `minScore` | [Auto-Approve](./auto-approve) |
+| Self-critique (fewer false positives) | `selfCritique.enabled: true` | [Reviewer Maturity](./maturity) |
+| Project grounding (CLAUDE.md + docs/) | `projectContext.claudeMd: true` | [Reviewer Maturity](./maturity) |
+| Official stack docs | `officialDocs.provider: context7` | [Reviewer Maturity](./maturity) |
+| CI cost (concurrency + paths-ignore) | in the workflow `on:` block | [Reviewer Maturity](./maturity) |
 | Incremental re-review | automatic on `synchronize` events | [Quick Start](./getting-started) |
 | Dependency graph | automatic on JS/TS stacks | [Design Decisions](./design) |
