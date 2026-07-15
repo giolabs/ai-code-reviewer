@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { ConfigLoader } from './config.js';
 import { GitHubClient, getReviewCommentEventFromEnv, getIssueCommentEventFromEnv } from './github.js';
 import { FeedbackHandler } from './feedback-handler.js';
+import { reviewPullRequest } from './reviewer.js';
 import { createLLMAdapter } from './llm/factory.js';
 import type { FeedbackEvent } from './types.js';
 
@@ -70,6 +71,17 @@ export async function handleFeedback(): Promise<void> {
     },
   });
 
-  await handler.handle(event);
+  const result = await handler.handle(event);
   console.log(chalk.green('✓ Feedback handled.'));
+
+  if (result.triggerReview) {
+    const ctx = await githubClient.getPullRequestContext(event.owner, event.repo, event.pullNumber);
+    if (!ctx) {
+      console.log(chalk.yellow('⚠ @botai review: no se pudo obtener el contexto del PR, se omite el re-review.'));
+      return;
+    }
+
+    console.log(chalk.bold('\n@botai review: re-ejecutando el review completo del PR...'));
+    await reviewPullRequest({ extraInstructions: result.extraInstructions }, ctx);
+  }
 }

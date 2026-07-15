@@ -4,13 +4,14 @@ The inline feedback feature lets developers interact with the bot directly from 
 
 ## Commands
 
-Replies must be inside an **inline thread** (a PR review comment), not on a general PR comment.
+`@botai resolved`, `@botai dismiss`, and `@botai explain` only work inside an **inline thread** (a PR review comment reply), since they act on one specific finding. `@botai approved` and `@botai review` also work from a **general PR comment**.
 
-| Reply | What happens |
-|---|---|
-| `@botai approved` | The bot posts a reply acknowledging the approval, then submits a GitHub **APPROVE** review on the PR |
-| `@botai review """your explanation"""` | The bot reads your explanation, fetches the current file state, and asks the LLM whether the finding is resolved. It always posts a reply with its decision |
-| `@botai resolved` | The bot immediately marks the finding as resolved and closes the thread. If all open bot findings are now resolved, it auto-approves the PR |
+| Reply | Where | What happens |
+|---|---|---|
+| `@botai approved` | Inline thread or general comment | The bot posts a reply acknowledging the approval, then submits a GitHub **APPROVE** review on the PR |
+| `@botai review """your explanation"""` | Inline thread | The bot reads your explanation, fetches the current file state, and asks the LLM whether that one finding is resolved. It always posts a reply with its decision |
+| `@botai review` | General comment | Re-runs the **full PR review**, feeding in your explanation (quoted with `"""..."""` in the same comment, or written in earlier general comments since the bot's last review) so the model can recognize when a previously flagged concern is already addressed instead of repeating it |
+| `@botai resolved` | Inline thread | The bot immediately marks the finding as resolved and closes the thread. If all open bot findings are now resolved, it auto-approves the PR |
 
 ## Setup
 
@@ -25,7 +26,7 @@ feedback:
 
 ### 2. Add the workflow job
 
-The `handle-feedback` command must run on the `pull_request_review_comment` event. Add it alongside your existing `ai-review` job:
+The `handle-feedback` command must run on the `pull_request_review_comment` event (inline replies) and the `issue_comment` event (general PR comments, needed for `@botai approved`/`@botai review` outside a thread). Add it alongside your existing `ai-review` job:
 
 ```yaml
 name: AI Code Review
@@ -34,6 +35,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review_comment:
+    types: [created]
+  issue_comment:
     types: [created]
 
 jobs:
@@ -57,7 +60,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   handle-feedback:
-    if: github.event_name == 'pull_request_review_comment'
+    if: github.event_name == 'pull_request_review_comment' || github.event_name == 'issue_comment'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -125,6 +128,32 @@ Bot: The guard is now present on the method. The finding is resolved. ✅
 ```
 
 If the bot determines the fix is insufficient, it replies with `maintained` and explains what's still missing.
+
+## @botai review from a general comment
+
+Use this when you want the bot to reconsider the review as a whole — not one specific finding — after you've explained yourself in the PR conversation. This re-runs a full review, not just a single-finding check.
+
+```
+Developer (general comment): ## Response to AI review
+
+Thanks — both findings addressed in `513e60f`, with one clarification.
+
+### 🟠 MAJOR — "adapter-registration factory may not run at runtime"
+
+The alarming conclusion is a false positive. NestJS eagerly instantiates
+all default-scope providers during application bootstrap, regardless of
+whether their token is injected elsewhere. See the new
+`channels.module.spec.ts` integration test that proves it.
+
+Developer (general comment): @botai review
+
+Bot: Re-revisando el PR teniendo en cuenta tu feedback...
+[a new full review runs and posts an updated summary + review event]
+```
+
+You don't need to repeat your explanation inside `"""..."""` — the bot collects every general comment posted since its last review summary (skipping its own comments) and feeds that conversation to the model as context, so a bare `@botai review` after an explanation comment works exactly like the example above. If you prefer to be explicit, `@botai review """your explanation"""` also works from a general comment and that quoted text is included too.
+
+The re-review runs the same pipeline as a normal push-triggered review (stack detection, per-group LLM calls, merged result) and updates the existing summary comment and review event in place — it does not create a duplicate.
 
 ## @botai resolved
 

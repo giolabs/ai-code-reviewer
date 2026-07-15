@@ -18,6 +18,7 @@ import {
   GitHubClient,
   buildDiffLineMap,
   computeFindingFingerprint,
+  extractOrphanFindings,
   getPullRequestContextFromEnv,
   getPushEventShasFromEnv,
 } from './github.js';
@@ -49,6 +50,8 @@ interface ReviewerCliOptions {
   save?: string;
   dryRun?: boolean;
   minSeverity?: string;
+  /** Extra context appended to `config.customInstructions` for this run only (e.g. developer feedback on a prior review via `@botai review`). */
+  extraInstructions?: string;
 }
 
 export interface ReviewPRResult {
@@ -65,6 +68,11 @@ function resolveConfig(opts: ReviewerCliOptions) {
   if (opts.model) config.model = opts.model;
   if (opts.language) config.language = opts.language;
   if (opts.minSeverity) config.minSeverity = opts.minSeverity as typeof config.minSeverity;
+  if (opts.extraInstructions) {
+    config.customInstructions = [config.customInstructions, opts.extraInstructions]
+      .filter((s): s is string => Boolean(s))
+      .join('\n\n');
+  }
 
   const resolvedModel = config.providerModel ?? config.model;
 
@@ -131,6 +139,27 @@ function collectPriorOpenFindings(
     });
   }
   return findings;
+}
+
+/**
+ * Orphan findings (unmappable to a diff line) have no inline comment to track,
+ * so without this they'd never gate incremental mode and every push would
+ * re-run a full review that can re-flag the same issue forever. Reads them
+ * back from the markers embedded in the summary comment (see
+ * `embedOrphanFindingMarker` in github.ts).
+ */
+async function collectPriorOrphanFindings(args: {
+  githubClient: GitHubClient;
+  ctx: PullRequestContext;
+}): Promise<ReadonlyArray<PriorFinding>> {
+  const { githubClient, ctx } = args;
+  const summaryCommentId = await githubClient.findBotSummaryCommentId(ctx.owner, ctx.repo, ctx.pullNumber);
+  if (summaryCommentId === 0) return [];
+
+  const summaryComment = await githubClient.getIssueComment(ctx.owner, ctx.repo, summaryCommentId);
+  if (!summaryComment) return [];
+
+  return extractOrphanFindings(summaryComment.body);
 }
 
 /** Directory list a cached ProjectContext was detected against, for set-equality staleness checks. */
@@ -495,8 +524,11 @@ async function runIncrementalReview(args: {
   return { recommendation: result.recommendation, findingsCount: result.findings.length };
 }
 
-export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<ReviewPRResult | null> {
-  const ctx = getPullRequestContextFromEnv();
+export async function reviewPullRequest(
+  opts: ReviewerCliOptions,
+  ctxOverride?: PullRequestContext,
+): Promise<ReviewPRResult | null> {
+  const ctx = ctxOverride ?? getPullRequestContextFromEnv();
   if (!ctx) {
     throw new Error(
       'No PR context detected. This command is intended to run in GitHub Actions on a pull_request event. For local use, run `review-file` or `review-diff`.',
@@ -553,7 +585,9 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
 
   if (pushShas) {
     const allComments = await githubClient.getPullRequestReviewComments(ctx.owner, ctx.repo, ctx.pullNumber);
-    const priorFindings = collectPriorOpenFindings(allComments, githubClient);
+    const inlinePriorFindings = collectPriorOpenFindings(allComments, githubClient);
+    const orphanPriorFindings = await collectPriorOrphanFindings({ githubClient, ctx });
+    const priorFindings = [...inlinePriorFindings, ...orphanPriorFindings];
 
     if (priorFindings.length > 0) {
       console.log(chalk.bold(`Revisando PR #${ctx.pullNumber}: ${ctx.title} [modo incremental]`));

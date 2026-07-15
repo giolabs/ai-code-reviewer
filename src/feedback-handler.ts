@@ -6,6 +6,7 @@ import type {
   FeedbackConfig,
   FeedbackEvent,
   FeedbackEvaluationResult,
+  FeedbackHandleResult,
   FindingMetadata,
   ReviewerConfig,
 } from './types.js';
@@ -32,39 +33,45 @@ export class FeedbackHandler {
     this.promptBuilder = new PromptBuilder();
   }
 
-  async handle(event: FeedbackEvent): Promise<void> {
-    if (!this.isFeedbackEnabled()) return;
-    if (this.isBot(event.actor)) return;
+  async handle(event: FeedbackEvent): Promise<FeedbackHandleResult> {
+    const NO_REVIEW: FeedbackHandleResult = { triggerReview: false };
+
+    if (!this.isFeedbackEnabled()) return NO_REVIEW;
+    if (this.isBot(event.actor)) return NO_REVIEW;
 
     const parsed = this.parseBotCommand(event.commentBody);
 
-    if (parsed.command === 'unknown') return;
+    if (parsed.command === 'unknown') return NO_REVIEW;
 
     if (parsed.command === 'approved') {
       await this.handleApproved(event);
-      return;
+      return NO_REVIEW;
     }
 
     if (event.source === 'issue_comment') {
+      if (parsed.command === 'review') {
+        return this.handleGeneralReview(event, parsed.reviewText ?? '');
+      }
+
       const msg =
         this.config.language === 'es'
-          ? `\`@botai ${parsed.command}\` solo funciona en respuestas a comentarios inline del diff. Usá \`@botai approved\` desde un comentario general.`
-          : `\`@botai ${parsed.command}\` only works in inline diff thread replies. Use \`@botai approved\` from a general PR comment.`;
+          ? `\`@botai ${parsed.command}\` solo funciona en respuestas a comentarios inline del diff. Usá \`@botai approved\` o \`@botai review\` desde un comentario general.`
+          : `\`@botai ${parsed.command}\` only works in inline diff thread replies. Use \`@botai approved\` or \`@botai review\` from a general PR comment.`;
       await this.postReply(event, msg);
-      return;
+      return NO_REVIEW;
     }
 
-    if (event.inReplyToId === null) return;
+    if (event.inReplyToId === null) return NO_REVIEW;
 
     const parentComment = await this.githubClient.getReviewComment(
       event.owner,
       event.repo,
       event.inReplyToId,
     );
-    if (!parentComment) return;
+    if (!parentComment) return NO_REVIEW;
 
     const metadata = this.githubClient.extractFindingMetadata(parentComment.body);
-    if (!metadata) return;
+    if (!metadata) return NO_REVIEW;
 
     if (parsed.command === 'review') {
       await this.handleReview({
@@ -80,6 +87,8 @@ export class FeedbackHandler {
     } else {
       await this.handleResolved({ event, metadata, parentBody: parentComment.body });
     }
+
+    return NO_REVIEW;
   }
 
   private isFeedbackEnabled(): boolean {
@@ -106,6 +115,72 @@ export class FeedbackHandler {
     }
 
     return { command: keyword };
+  }
+
+  /**
+   * `@botai review` posted as a general PR comment (not a reply to a specific
+   * inline finding). Unlike the inline `review` command — which evaluates one
+   * finding against a code window — this re-runs the full PR review, feeding
+   * the developer's own explanation (either quoted with `"""..."""` in this
+   * same comment, or written in earlier general comments since the bot's last
+   * review) into the model as extra context, so it can recognize when a
+   * previously flagged concern is now addressed instead of repeating it.
+   */
+  private async handleGeneralReview(event: FeedbackEvent, reviewText: string): Promise<FeedbackHandleResult> {
+    const feedback = await this.gatherDeveloperFeedback(event, reviewText);
+
+    const replyBody =
+      this.config.language === 'es'
+        ? `Re-revisando el PR${feedback ? ' teniendo en cuenta tu feedback' : ''}...`
+        : `Re-reviewing the PR${feedback ? ' with your feedback in mind' : ''}...`;
+    await this.postReply(event, replyBody);
+
+    if (!feedback) {
+      return { triggerReview: true };
+    }
+
+    const extraInstructions =
+      this.config.language === 'es'
+        ? `El desarrollador respondió al review anterior con el siguiente feedback. Si un finding ya fue atendido o la observación no aplica según esta respuesta, no lo repitas — explicá brevemente por qué en el resumen en su lugar.\n\n${feedback}`
+        : `The developer responded to the previous review with the following feedback. If a finding is already addressed or does not apply per this response, do not repeat it — briefly explain why in the summary instead.\n\n${feedback}`;
+
+    return { triggerReview: true, extraInstructions };
+  }
+
+  /**
+   * Collects the reviewText quoted in the triggering comment plus every
+   * human general comment posted since the bot's last review summary, so a
+   * bare `@botai review` (context left in an earlier comment) still works.
+   */
+  private async gatherDeveloperFeedback(event: FeedbackEvent, reviewText: string): Promise<string> {
+    const parts: string[] = [];
+    if (reviewText) parts.push(reviewText);
+
+    const summaryCommentId = await this.githubClient.findBotSummaryCommentId(
+      event.owner,
+      event.repo,
+      event.pullNumber,
+    );
+    const summaryComment =
+      summaryCommentId !== 0
+        ? await this.githubClient.getIssueComment(event.owner, event.repo, summaryCommentId)
+        : null;
+    const sinceTimestamp = summaryComment ? Date.parse(summaryComment.updatedAt) : 0;
+
+    const allComments = await this.githubClient.getPullRequestGeneralComments(
+      event.owner,
+      event.repo,
+      event.pullNumber,
+    );
+
+    for (const c of allComments) {
+      if (c.id === event.commentId) continue;
+      if (this.isBot(c.user)) continue;
+      if (Date.parse(c.createdAt) < sinceTimestamp) continue;
+      parts.push(`@${c.user}: ${c.body}`);
+    }
+
+    return parts.join('\n\n---\n\n');
   }
 
   private async handleApproved(event: FeedbackEvent): Promise<void> {

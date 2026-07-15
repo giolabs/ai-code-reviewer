@@ -10,6 +10,7 @@ import type {
   ReviewFinding,
   FindingMetadata,
   PushEventShas,
+  PriorFinding,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -421,17 +422,68 @@ export class GitHubClient {
   }
 
   /** Fetches a top-level issue comment (e.g. the AI Code Review summary), not a diff/review comment. */
-  async getIssueComment(owner: string, repo: string, commentId: number): Promise<{ body: string } | null> {
+  async getIssueComment(
+    owner: string,
+    repo: string,
+    commentId: number,
+  ): Promise<{ body: string; updatedAt: string } | null> {
     try {
       const { data } = await this.octokit.issues.getComment({
         owner,
         repo,
         comment_id: commentId,
       });
-      return { body: data.body ?? '' };
+      return { body: data.body ?? '', updatedAt: data.updated_at };
     } catch {
       return null;
     }
+  }
+
+  /** Fetches PR context (title, body, headSha, baseSha) by number — for events that don't carry it (e.g. issue_comment). */
+  async getPullRequestContext(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<PullRequestContext | null> {
+    try {
+      const { data } = await this.octokit.pulls.get({ owner, repo, pull_number: pullNumber });
+      return {
+        owner,
+        repo,
+        pullNumber,
+        headSha: data.head.sha,
+        baseSha: data.base.sha,
+        title: data.title,
+        body: data.body,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Fetches every top-level (issue-style) comment on a PR, oldest first. */
+  async getPullRequestGeneralComments(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<ReadonlyArray<{ id: number; user: string; body: string; createdAt: string }>> {
+    const comments: Array<{ id: number; user: string; body: string; createdAt: string }> = [];
+    for await (const response of this.octokit.paginate.iterator(this.octokit.issues.listComments, {
+      owner,
+      repo,
+      issue_number: pullNumber,
+      per_page: 100,
+    })) {
+      for (const c of response.data) {
+        comments.push({
+          id: c.id,
+          user: c.user?.login ?? '',
+          body: c.body ?? '',
+          createdAt: c.created_at,
+        });
+      }
+    }
+    return comments;
   }
 
   extractFindingMetadata(commentBody: string): FindingMetadata | null {
@@ -989,6 +1041,52 @@ export function buildFindingMetadata(
   };
 }
 
+/**
+ * Orphan findings (unmappable to a diff line, e.g. `line: 0`) never become an
+ * inline comment, so they have no `<!-- ai-review-finding -->` metadata and
+ * `ThreadResolver` can't track them. Without this, a PR whose only blocking
+ * finding was an orphan can never gate into incremental (verify-only) mode —
+ * every push re-runs a full review from scratch and can re-flag the exact
+ * same finding even after the developer addressed it. Embedding a lightweight
+ * marker per orphan in the summary comment lets the next push's
+ * `collectPriorOpenFindings` surface it as a prior finding to verify, same as
+ * inline findings.
+ */
+function embedOrphanFindingMarker(f: ReviewFinding): string {
+  const record: PriorFinding = {
+    file: f.file,
+    line: f.line,
+    severity: f.severity,
+    title: f.title,
+    description: f.description,
+  };
+  return `<!-- ai-review-orphan:${JSON.stringify(record)} -->`;
+}
+
+/** Extracts every orphan-finding marker embedded in a summary comment body. */
+export function extractOrphanFindings(body: string): PriorFinding[] {
+  const results: PriorFinding[] = [];
+  const regex = /<!-- ai-review-orphan:([\s\S]*?) -->/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(body)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1].trim()) as Partial<PriorFinding>;
+      if (
+        typeof parsed.file === 'string' &&
+        typeof parsed.line === 'number' &&
+        typeof parsed.severity === 'string' &&
+        typeof parsed.title === 'string' &&
+        typeof parsed.description === 'string'
+      ) {
+        results.push(parsed as PriorFinding);
+      }
+    } catch {
+      // Skip malformed markers rather than failing the whole review.
+    }
+  }
+  return results;
+}
+
 function formatInlineCommentBody(f: ReviewFinding, metadata: FindingMetadata): string {
   const lines = [
     `${severityEmoji(f.severity)} **${f.severity.toUpperCase()}** · \`${f.category}\` · ${f.title}`,
@@ -1032,6 +1130,7 @@ function composeSummary(summary: string, orphans: ReviewFinding[]): string {
       parts.push(
         `- ${severityEmoji(f.severity)} **${f.severity.toUpperCase()}** \`${f.file}:${f.line}\` · ${f.category}: **${f.title}** — ${f.description}`,
       );
+      parts.push(embedOrphanFindingMarker(f));
     }
   }
 

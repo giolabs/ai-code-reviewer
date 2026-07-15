@@ -305,6 +305,18 @@ export interface FeedbackEvent {
   source: 'review_comment' | 'issue_comment';
 }
 
+/**
+ * Result of handling one feedback event. When `triggerReview` is true, the
+ * caller (the `handle-feedback` CLI command) re-runs the full PR review —
+ * `FeedbackHandler` only interprets/replies to comments, it doesn't own the
+ * review pipeline.
+ */
+export interface FeedbackHandleResult {
+  triggerReview: boolean;
+  /** Extra context (developer's clarifications) appended to the system prompt for the triggered review. */
+  extraInstructions?: string;
+}
+
 export interface ResolveFixedOptions {
   pullNumber: number;
   owner: string;

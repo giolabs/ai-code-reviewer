@@ -74,6 +74,9 @@ function makeGitHubClient(
     submitApprovalReview: vi.fn().mockResolvedValue(undefined),
     countOpenBotFindings: vi.fn().mockResolvedValue(0),
     postPullRequestComment: vi.fn().mockResolvedValue(undefined),
+    findBotSummaryCommentId: vi.fn().mockResolvedValue(0),
+    getIssueComment: vi.fn().mockResolvedValue(null),
+    getPullRequestGeneralComments: vi.fn().mockResolvedValue([]),
   } as unknown as GitHubClient;
 }
 
@@ -193,18 +196,64 @@ describe('FeedbackHandler', () => {
       expect(client.submitApprovalReview).toHaveBeenCalledOnce();
     });
 
-    it('should reply with inline-only message when @botai review is used in a general PR comment', async () => {
+    it('should trigger a full re-review when @botai review is used in a general PR comment', async () => {
       // Arrange
       const config = makeConfig();
       const client = makeGitHubClient();
       const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
 
       // Act
-      await handler.handle(makeFeedbackEvent({ commentBody: '@botai review """text"""', inReplyToId: null, source: 'issue_comment' }));
+      const result = await handler.handle(
+        makeFeedbackEvent({ commentBody: '@botai review """text"""', inReplyToId: null, source: 'issue_comment' }),
+      );
 
       // Assert
       expect(client.postPullRequestComment).toHaveBeenCalledOnce();
-      expect(client.submitApprovalReview).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        triggerReview: true,
+        extraInstructions: expect.stringContaining('text'),
+      });
+    });
+
+    it('should gather human general comments since the last bot summary as extra instructions', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = {
+        ...makeGitHubClient(),
+        findBotSummaryCommentId: vi.fn().mockResolvedValue(42),
+        getIssueComment: vi.fn().mockResolvedValue({ body: 'summary', updatedAt: '2026-07-15T21:04:48.000Z' }),
+        getPullRequestGeneralComments: vi.fn().mockResolvedValue([
+          { id: 1, user: 'lucasgio', body: 'Explicación del fix.', createdAt: '2026-07-15T21:43:05.000Z' },
+          { id: 2, user: 'github-actions[bot]', body: 'Bot noise', createdAt: '2026-07-15T21:44:00.000Z' },
+          { id: 3, user: 'lucasgio', body: 'Old comment before the review', createdAt: '2026-01-01T00:00:00.000Z' },
+        ]),
+      } as unknown as GitHubClient;
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      const result = await handler.handle(
+        makeFeedbackEvent({ commentBody: '@botai review', inReplyToId: null, source: 'issue_comment', commentId: 999 }),
+      );
+
+      // Assert
+      expect(result.extraInstructions).toContain('Explicación del fix.');
+      expect(result.extraInstructions).not.toContain('Bot noise');
+      expect(result.extraInstructions).not.toContain('Old comment before the review');
+    });
+
+    it('should not trigger a review when there is no feedback to gather and no quoted text', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient();
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      const result = await handler.handle(
+        makeFeedbackEvent({ commentBody: '@botai review', inReplyToId: null, source: 'issue_comment' }),
+      );
+
+      // Assert
+      expect(result).toEqual({ triggerReview: true });
     });
 
     it('should reply with inline-only message when @botai resolved is used in a general PR comment', async () => {

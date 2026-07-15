@@ -86,7 +86,7 @@ npx @giolabsuy/ai-code-reviewer review-diff --staged --min-severity major
 
 ## handle-feedback
 
-Handles developer `@botai` commands in inline PR comment threads. Must run inside a GitHub Actions environment triggered by `pull_request_review_comment`. Supported commands: `@botai approved`, `@botai review """text"""`, `@botai resolved`.
+Handles developer `@botai` commands, both in inline PR comment thread replies and in general PR comments. Must run inside a GitHub Actions environment triggered by `pull_request_review_comment` or `issue_comment`. Supported commands: `@botai approved` (inline or general), `@botai review """text"""` (inline: evaluates one finding), `@botai review` (general comment: re-runs the full PR review with the conversation's feedback as context), `@botai resolved`, `@botai dismiss`, `@botai explain` (inline only). See [Inline Feedback](./handle-feedback) for details.
 
 ```bash
 npx @giolabsuy/ai-code-reviewer handle-feedback [options]

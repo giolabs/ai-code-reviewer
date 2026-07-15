@@ -3,7 +3,7 @@ import type { ReviewerConfig } from '../src/types.js';
 
 const mocks = vi.hoisted(() => ({
   loadConfig: vi.fn(),
-  handle: vi.fn().mockResolvedValue(undefined),
+  handle: vi.fn().mockResolvedValue({ triggerReview: false }),
   getReviewCommentEventFromEnv: vi.fn(),
   getIssueCommentEventFromEnv: vi.fn(),
 }));
