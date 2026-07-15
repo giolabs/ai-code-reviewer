@@ -176,8 +176,10 @@ export class GitHubClient {
   }
 
   /**
-   * Posts a review on the PR with a summary and inline comments.
-   * Returns the created review ID (used as the summary comment ID for later edits).
+   * Posts a review on the PR with inline comments and upserts the single
+   * "AI Code Review" summary comment (created once, edited in place on every
+   * later push) so a PR never accumulates duplicate explanation blocks.
+   * Returns the summary comment ID.
    */
   async postReview(ctx: PullRequestContext, args: PostReviewArgs): Promise<number> {
     const { summary, findings, event, inlineComments, maxInlineComments, diffLineMap } = args;
@@ -205,6 +207,7 @@ export class GitHubClient {
     }
 
     const finalSummary = composeSummary(summary, orphans);
+    const summaryCommentId = await this.upsertSummaryComment(ctx, finalSummary);
 
     const review = await this.octokit.pulls.createReview({
       owner: ctx.owner,
@@ -212,7 +215,7 @@ export class GitHubClient {
       pull_number: ctx.pullNumber,
       commit_id: ctx.headSha,
       event,
-      body: finalSummary,
+      body: REVIEW_POINTER_BODY,
       comments: inline.map((c) => ({
         path: c.path,
         line: c.line,
@@ -225,7 +228,32 @@ export class GitHubClient {
       await this.patchInlineCommentMetadata(ctx, review.data.id, inline);
     }
 
-    return review.data.id;
+    return summaryCommentId;
+  }
+
+  /**
+   * Creates the "AI Code Review" summary comment on first run, or edits it in
+   * place on later pushes — a PR gets exactly one explanation, not one per push.
+   */
+  private async upsertSummaryComment(ctx: PullRequestContext, body: string): Promise<number> {
+    const existingId = await this.findBotSummaryCommentId(ctx.owner, ctx.repo, ctx.pullNumber);
+    if (existingId !== 0) {
+      await this.octokit.issues.updateComment({
+        owner: ctx.owner,
+        repo: ctx.repo,
+        comment_id: existingId,
+        body,
+      });
+      return existingId;
+    }
+
+    const created = await this.octokit.issues.createComment({
+      owner: ctx.owner,
+      repo: ctx.repo,
+      issue_number: ctx.pullNumber,
+      body,
+    });
+    return created.data.id;
   }
 
   private async patchInlineCommentMetadata(
@@ -392,6 +420,20 @@ export class GitHubClient {
     }
   }
 
+  /** Fetches a top-level issue comment (e.g. the AI Code Review summary), not a diff/review comment. */
+  async getIssueComment(owner: string, repo: string, commentId: number): Promise<{ body: string } | null> {
+    try {
+      const { data } = await this.octokit.issues.getComment({
+        owner,
+        repo,
+        comment_id: commentId,
+      });
+      return { body: data.body ?? '' };
+    } catch {
+      return null;
+    }
+  }
+
   extractFindingMetadata(commentBody: string): FindingMetadata | null {
     const match = /<!-- ai-review-finding:([\s\S]*?)-->/.exec(commentBody);
     if (!match) return null;
@@ -477,7 +519,7 @@ export class GitHubClient {
       });
       for (let i = data.length - 1; i >= 0; i--) {
         const comment = data[i];
-        if (comment?.body?.includes('## 🤖 AI Code Review')) {
+        if (comment?.body?.includes(SUMMARY_MARKER)) {
           return comment.id;
         }
       }
@@ -954,18 +996,29 @@ function formatInlineCommentBody(f: ReviewFinding, metadata: FindingMetadata): s
     f.description,
   ];
   if (f.suggestion) {
-    lines.push('', '**Sugerencia:**', '', f.suggestion);
+    lines.push('', '**Sugerencia:**', '', ensureFencedCodeBlock(f.suggestion));
   }
   lines.push('', ACTIONS_FOOTER);
   lines.push(`\n<!-- ai-review-finding:${JSON.stringify(metadata)} -->`);
   return lines.join('\n');
 }
 
+/** Wraps a suggestion in a fenced code block unless it already contains one. */
+function ensureFencedCodeBlock(suggestion: string): string {
+  const trimmed = suggestion.trim();
+  if (/```/.test(trimmed)) return trimmed;
+  return ['```', trimmed, '```'].join('\n');
+}
+
 const ACTIONS_FOOTER =
   '<sub>Respondé en este hilo: `@botai resolved` para cerrar · `@botai dismiss` si es falso positivo · `@botai explain` para más detalle.</sub>';
 
+const AI_REVIEW_HEADER = '✨ AI Code Review';
+const SUMMARY_MARKER = '<!-- ai-review-summary -->';
+const REVIEW_POINTER_BODY = `_Ver el resumen de este review en el comentario "${AI_REVIEW_HEADER}" más arriba._`;
+
 function composeSummary(summary: string, orphans: ReviewFinding[]): string {
-  const parts = ['## 🤖 AI Code Review', '', summary];
+  const parts = [`## ${AI_REVIEW_HEADER}`, '', summary];
 
   if (orphans.length > 0) {
     parts.push(
@@ -986,6 +1039,7 @@ function composeSummary(summary: string, orphans: ReviewFinding[]): string {
     '',
     '---',
     '_Generado por [ai-code-reviewer](https://www.npmjs.com/package/ai-code-reviewer)._',
+    SUMMARY_MARKER,
   );
   return parts.join('\n');
 }

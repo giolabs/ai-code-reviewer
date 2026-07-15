@@ -48,7 +48,7 @@ export class OutputFormatter {
 
   print(result: ReviewResult): void {
     console.log();
-    console.log(chalk.bold.underline('🤖 AI Code Review'));
+    console.log(chalk.bold.underline('✨ AI Code Review'));
     console.log();
     console.log(chalk.bold('Resumen:'));
     console.log(result.summary);
@@ -127,7 +127,7 @@ export class OutputFormatter {
   }
 
   toMarkdown(result: ReviewResult): string {
-    const lines: string[] = ['# 🤖 AI Code Review', '', '## Resumen', '', result.summary, ''];
+    const lines: string[] = ['# ✨ AI Code Review', '', '## Resumen', '', result.summary, ''];
 
     if (typeof result.overallScore === 'number') {
       lines.push(`**Score:** ${result.overallScore}/10`);

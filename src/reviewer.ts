@@ -242,7 +242,29 @@ async function runIncrementalReview(args: {
   }
 
   const diffLineMap = buildDiffLineMap(filtered);
-  const event = mapRecommendationToEvent(result.recommendation);
+  const decision = decideReviewEvent(result, config);
+  const event = decision.event;
+
+  if (decision.autoApproved) {
+    console.log(
+      chalk.green(
+        `✓ Auto-aprobando PR #${ctx.pullNumber}: recomendación approve, sin findings bloqueantes.`,
+      ),
+    );
+    await dismissBotReviews(githubClient, ctx);
+  } else if (decision.forcedBlock) {
+    console.log(
+      chalk.red(
+        `✗ Findings de severidad major/critical detectados: se fuerza Request Changes en PR #${ctx.pullNumber}, sin importar el score o la recomendación del modelo.`,
+      ),
+    );
+  } else if (config.autoApprove?.enabled) {
+    console.log(
+      chalk.yellow(
+        `ℹ Auto-approve: condiciones no cumplidas (${buildSkipReason(result, config)}). Posteando como ${event}.`,
+      ),
+    );
+  }
 
   await githubClient.postReview(ctx, {
     summary: extractSummaryForPost(result),
@@ -255,7 +277,7 @@ async function runIncrementalReview(args: {
 
   console.log(chalk.green(`\n✓ Review incremental posteado en PR #${ctx.pullNumber}`));
 
-  if (result.recommendation === 'request_changes') {
+  if (event === 'REQUEST_CHANGES') {
     process.exitCode = 1;
   }
 
@@ -413,24 +435,28 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     ),
   );
 
-  let event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE';
-  if (shouldAutoApprove(result, config)) {
+  const decision = decideReviewEvent(result, config);
+  const event = decision.event;
+
+  if (decision.autoApproved) {
     console.log(
       chalk.green(
         `✓ Auto-aprobando PR #${ctx.pullNumber}: recomendación approve, sin findings bloqueantes.`,
       ),
     );
     await dismissBotReviews(githubClient, ctx);
-    event = 'APPROVE';
-  } else {
-    if (config.autoApprove?.enabled) {
-      console.log(
-        chalk.yellow(
-          `ℹ Auto-approve: condiciones no cumplidas (${buildSkipReason(result, config)}). Posteando como ${mapRecommendationToEvent(result.recommendation)}.`,
-        ),
-      );
-    }
-    event = mapRecommendationToEvent(result.recommendation);
+  } else if (decision.forcedBlock) {
+    console.log(
+      chalk.red(
+        `✗ Findings de severidad major/critical detectados: se fuerza Request Changes en PR #${ctx.pullNumber}, sin importar el score o la recomendación del modelo.`,
+      ),
+    );
+  } else if (config.autoApprove?.enabled) {
+    console.log(
+      chalk.yellow(
+        `ℹ Auto-approve: condiciones no cumplidas (${buildSkipReason(result, config)}). Posteando como ${event}.`,
+      ),
+    );
   }
 
   await githubClient.postReview(ctx, {
@@ -461,7 +487,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     console.log(chalk.dim(`✓ Contexto del proyecto guardado (tech: ${tech}).`));
   }
 
-  if (result.recommendation === 'request_changes') {
+  if (event === 'REQUEST_CHANGES') {
     process.exitCode = 1;
   }
 
@@ -473,6 +499,33 @@ function mapRecommendationToEvent(
 ): 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE' {
   if (rec === 'request_changes') return 'REQUEST_CHANGES';
   return 'COMMENT';
+}
+
+interface ReviewEventDecision {
+  event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE';
+  autoApproved: boolean;
+  forcedBlock: boolean;
+}
+
+/**
+ * Decides the GitHub review event. A major/critical finding always forces
+ * Request Changes and blocks the PR, regardless of the model's own
+ * recommendation or overallScore. Only minor/warning-only reviews with a
+ * score above the configured threshold can be auto-approved.
+ */
+export function decideReviewEvent(result: ReviewResult, config: ReviewerConfig): ReviewEventDecision {
+  if (shouldAutoApprove(result, config)) {
+    return { event: 'APPROVE', autoApproved: true, forcedBlock: false };
+  }
+
+  const hasBlockingFindings = result.findings.some(
+    (f) => f.severity === 'critical' || f.severity === 'major',
+  );
+  if (hasBlockingFindings) {
+    return { event: 'REQUEST_CHANGES', autoApproved: false, forcedBlock: true };
+  }
+
+  return { event: mapRecommendationToEvent(result.recommendation), autoApproved: false, forcedBlock: false };
 }
 
 export function shouldAutoApprove(result: ReviewResult, config: ReviewerConfig): boolean {

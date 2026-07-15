@@ -382,7 +382,7 @@ describe('GitHubClient.findBotSummaryCommentId', () => {
     const mockListComments = vi.fn().mockResolvedValue({
       data: [
         { id: 10, body: 'Regular comment' },
-        { id: 42, body: '## 🤖 AI Code Review\n\nSome summary' },
+        { id: 42, body: '## ✨ AI Code Review\n\nSome summary\n<!-- ai-review-summary -->' },
       ],
     });
     (client as unknown as { octokit: { issues: { listComments: typeof mockListComments } } }).octokit = {
@@ -453,7 +453,7 @@ describe('GitHubClient.findContextComment', () => {
     const mockListComments = vi.fn().mockResolvedValue({
       data: [
         { id: 1, body: 'Regular comment' },
-        { id: 2, body: '## 🤖 AI Code Review\n\nSome summary' },
+        { id: 2, body: '## ✨ AI Code Review\n\nSome summary\n<!-- ai-review-summary -->' },
       ],
     });
     (client as unknown as { octokit: { issues: { listComments: typeof mockListComments } } }).octokit = {

@@ -122,7 +122,7 @@ export class ThreadResolver {
   }): Promise<void> {
     if (args.summaryCommentId === 0) return;
     try {
-      const existing = await this.githubClient.getReviewComment(
+      const existing = await this.githubClient.getIssueComment(
         args.owner,
         args.repo,
         args.summaryCommentId,
