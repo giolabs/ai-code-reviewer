@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-beta.15
+
+- **Orphan finding tracking**: findings that can't map to a diff line are now tagged with an embedded marker in the summary comment and fed into incremental "prior open findings," instead of having no metadata at all. Previously, a PR whose only blocking finding was an orphan could never enter incremental mode — every push re-ran a full review from scratch and could re-flag the same finding forever, with no `@botai dismiss` path since there's no inline thread to reply to.
+- **`@botai review` from a general PR comment**: previously only worked as a reply inside an inline diff thread. Now, posted as a general comment, it re-runs the full PR review — feeding the model your explanation (quoted with `"""..."""`, or gathered from earlier general comments since the bot's last review) so it can recognize an already-addressed concern instead of repeating it. See [Inline Feedback](./handle-feedback#botai-review-from-a-general-comment).
+
 ## 0.1.0-beta.14
 
 - **Multi-stack review by directory**: `appDir` now accepts a list of subproject directories (e.g. a Flutter app + a NestJS backend in the same monorepo). Each changed file is reviewed under the rules of whichever configured directory is its longest matching path prefix — own LLM call, own tech-specific rules template per group — and results merge into a single PR review. A `major`/`critical` finding in any one subproject still forces `REQUEST_CHANGES` for the whole PR. New `maxStackGroups` config (default `4`) bounds the LLM call count on repos with many subprojects. Fully backward compatible with the existing single-string `appDir`. See [Tech Stacks > Monorepos](./tech-stacks#monorepos-multiple-stacks).

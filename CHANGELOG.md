@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.1.0-beta.15] – 2026-07-15
+
+### Features
+- orphan findings (unmappable to a diff line) are now tracked via an embedded marker in the summary comment and fed into incremental "prior open findings" — previously they had no metadata, so a PR whose only blocking finding was an orphan could never gate into incremental mode and every push re-ran a full review that could re-flag the exact same issue forever, with no `@botai dismiss` path.
+- `@botai review` now works from a general PR comment, not just inline thread replies. It re-runs the full PR review, feeding the developer's explanation (quoted with `"""..."""` in the same comment, or gathered from earlier general comments since the bot's last review) into the model so it can recognize when a previously flagged concern is already addressed.
+
 ## [v0.1.0-beta.14] – 2026-07-15
 
 ### Features
