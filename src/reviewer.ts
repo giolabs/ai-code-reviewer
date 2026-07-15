@@ -8,6 +8,8 @@ import { PromptBuilder } from './prompts.js';
 import { RulesLoader } from './rules.js';
 import { OutputFormatter } from './output.js';
 import { DependencyGraphIndexer } from './dependency-indexer.js';
+import { StackGrouper } from './stack-grouper.js';
+import type { StackDetection } from './stack-grouper.js';
 import { createLLMAdapter } from './llm/factory.js';
 import { ReviewJsonParser } from './llm/json-parser.js';
 import { ProjectKnowledgeDigest } from './project-knowledge.js';
@@ -27,6 +29,7 @@ import type {
   ReviewerConfig,
   ReviewResult,
   ReviewFinding,
+  StackGroup,
   TechStack,
   PullRequestContext,
   PushEventShas,
@@ -65,20 +68,24 @@ function resolveConfig(opts: ReviewerCliOptions) {
 
   const resolvedModel = config.providerModel ?? config.model;
 
-  // appDir: subdirectory where package.json lives (monorepos with app not at root)
-  const appCwd = config.appDir ? resolve(cwd, config.appDir) : cwd;
+  // appDir: subdirectory where package.json lives (monorepos with app not at root).
+  // review-file/review-diff aren't grouped by stack (out of scope), so they use
+  // the first configured directory (or root) as before.
+  const primaryAppDir = StackGrouper.normalizeAppDirs(config.appDir)[0];
+  const appCwd = primaryAppDir ? resolve(cwd, primaryAppDir) : cwd;
 
   const tech = (opts.tech ?? config.tech ?? new TechDetector({ cwd: appCwd }).detect()) as TechStack;
 
   const rulesLoader = new RulesLoader({ configLoader });
   const rulesPath = opts.rulesPath ?? config.rules;
   const projectRules = rulesLoader.loadProjectRules({ rulesPath, cwd });
-  const globalRules = rulesLoader.loadGlobalRules(tech);
-  const mergedRulesText = rulesLoader.mergeRules({
-    project: projectRules,
-    global: globalRules,
-    enabledChecks: config.checks,
-  });
+  const buildRulesForTech = (t: TechStack): string =>
+    rulesLoader.mergeRules({
+      project: projectRules,
+      global: rulesLoader.loadGlobalRules(t),
+      enabledChecks: config.checks,
+    });
+  const mergedRulesText = buildRulesForTech(tech);
 
   let projectDigest: string | undefined;
   if (config.projectContext) {
@@ -87,7 +94,7 @@ function resolveConfig(opts: ReviewerCliOptions) {
     projectDigest = built.digest || undefined;
   }
 
-  return { config, configLoader, mergedRulesText, tech, resolvedModel, cwd, appCwd, projectDigest };
+  return { config, configLoader, mergedRulesText, buildRulesForTech, tech, resolvedModel, cwd, appCwd, projectDigest };
 }
 
 function logHeader(tech: string, provider: string, model: string, language: string): void {
@@ -126,6 +133,214 @@ function collectPriorOpenFindings(
   return findings;
 }
 
+/** Directory list a cached ProjectContext was detected against, for set-equality staleness checks. */
+function sameDirs(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
+  if (a.length !== b.length) return false;
+  const setA = new Set(a);
+  return b.every((d) => setA.has(d));
+}
+
+/** Converts a cached ProjectContext (legacy single-tech or multi-stack) into a StackDetection. */
+function contextToDetection(context: ProjectContext): StackDetection {
+  if (context.stackMap) {
+    const rootEntry = context.stackMap.find((e) => e.dir === '.');
+    return {
+      dirs: context.stackMap.filter((e) => e.dir !== '.'),
+      rootTech: rootEntry?.tech ?? context.tech,
+    };
+  }
+  // Legacy cache written before multi-stack support: one dir (or none), one tech for both.
+  return {
+    dirs: context.appDir ? [{ dir: context.appDir, tech: context.tech }] : [],
+    rootTech: context.tech,
+  };
+}
+
+function detectionToStackMap(detection: StackDetection): ReadonlyArray<{ dir: string; tech: TechStack }> {
+  return [...detection.dirs, { dir: '.', tech: detection.rootTech }];
+}
+
+function describeDetection(detection: StackDetection): string {
+  const parts = detection.dirs.map((d) => `${d.dir}=${TechDetector.displayName(d.tech)}`);
+  parts.push(`root=${TechDetector.displayName(detection.rootTech)}`);
+  return parts.join(', ');
+}
+
+const RECOMMENDATION_SEVERITY: Record<ReviewResult['recommendation'], number> = {
+  approve: 0,
+  comment: 1,
+  request_changes: 2,
+};
+
+/**
+ * Merges one ReviewResult per stack group into the single ReviewResult the
+ * rest of the pipeline (suppression filtering, event decision, GitHub post)
+ * already expects. Worst recommendation wins; score is the minimum reported;
+ * findings/bugs/risks are concatenated; summaries are prefixed per group
+ * when there is more than one.
+ */
+export function mergeReviewResults(
+  entries: ReadonlyArray<{ group: StackGroup; result: ReviewResult }>,
+): ReviewResult {
+  if (entries.length === 1) return entries[0].result;
+
+  const results = entries.map((e) => e.result);
+
+  const recommendation = results.reduce<ReviewResult['recommendation']>(
+    (worst, r) =>
+      RECOMMENDATION_SEVERITY[r.recommendation] > RECOMMENDATION_SEVERITY[worst] ? r.recommendation : worst,
+    'approve',
+  );
+
+  const scores = results
+    .map((r) => r.overallScore)
+    .filter((s): s is number => typeof s === 'number');
+  const overallScore = scores.length > 0 ? Math.min(...scores) : undefined;
+
+  const summary = entries
+    .map(({ group, result }) => `### ${group.dir} (${TechDetector.displayName(group.tech)})\n\n${result.summary}`)
+    .join('\n\n');
+
+  const findings = results.flatMap((r) => r.findings);
+  const anticipatedBugs = results.flatMap((r) => r.anticipatedBugs ?? []);
+  const regressionRisks = results.flatMap((r) => r.regressionRisks ?? []);
+
+  const tokensUsed = results.reduce<{ prompt: number; completion: number; total: number } | undefined>(
+    (acc, r) => {
+      if (!r.tokensUsed) return acc;
+      return {
+        prompt: (acc?.prompt ?? 0) + r.tokensUsed.prompt,
+        completion: (acc?.completion ?? 0) + r.tokensUsed.completion,
+        total: (acc?.total ?? 0) + r.tokensUsed.total,
+      };
+    },
+    undefined,
+  );
+
+  return {
+    summary,
+    findings,
+    recommendation,
+    ...(overallScore !== undefined ? { overallScore } : {}),
+    ...(anticipatedBugs.length > 0 ? { anticipatedBugs } : {}),
+    ...(regressionRisks.length > 0 ? { regressionRisks } : {}),
+    ...(tokensUsed ? { tokensUsed } : {}),
+  };
+}
+
+interface ReviewStackGroupArgs {
+  group: StackGroup;
+  ctx: PullRequestContext;
+  githubClient: GitHubClient;
+  config: ReviewerConfig;
+  mergedRulesText: string;
+  resolvedModel: string;
+  projectDigest?: string;
+  formatter: OutputFormatter;
+}
+
+/** Full review of one stack group: dependency graph, file content budget, LLM call, severity filter. */
+async function reviewStackGroup(args: ReviewStackGroupArgs): Promise<ReviewResult> {
+  const { group, ctx, githubClient, config, mergedRulesText, resolvedModel, projectDigest, formatter } = args;
+
+  console.log(
+    chalk.dim(`Grupo "${group.dir}" (${TechDetector.displayName(group.tech)}): ${group.files.length} archivo(s).`),
+  );
+
+  console.log(chalk.dim('Analizando grafo de dependencias...'));
+  const indexer = new DependencyGraphIndexer({ cwd: group.appCwd, files: group.files, tech: group.tech });
+  const buildResult = await indexer.build();
+
+  let dependencyIndex: string | undefined;
+  if (buildResult.status === 'ok') {
+    dependencyIndex = buildResult.index;
+    const edgeCount =
+      (dependencyIndex.match(/→/g) ?? []).length + (dependencyIndex.match(/←/g) ?? []).length;
+    console.log(chalk.dim(`Grafo listo: ${group.files.length} archivos, ${edgeCount} relaciones.`));
+    if (dependencyIndex.endsWith('...(truncated)')) {
+      console.log(chalk.dim('Grafo truncado a 8.000 caracteres.'));
+    }
+  } else if (buildResult.status === 'unsupported') {
+    console.log(chalk.dim(`Grafo de dependencias: stack "${TechDetector.displayName(group.tech)}" no soportado, se omite.`));
+  } else if (buildResult.status === 'timeout') {
+    console.log(chalk.dim('Grafo de dependencias: madge timeout, se omite.'));
+  } else {
+    console.log(chalk.dim(`Grafo de dependencias: madge falló, se omite.`));
+    if (process.env.DEBUG) console.error(chalk.dim(`[DEBUG] madge: ${buildResult.detail}`));
+  }
+
+  await loadFileContentBudgeted({ githubClient, ctx, files: group.files });
+
+  const result = await callLLM({
+    files: group.files,
+    prTitle: ctx.title,
+    prBody: ctx.body,
+    config,
+    mergedRulesText,
+    tech: group.tech,
+    resolvedModel,
+    dependencyIndex,
+    projectDigest,
+  });
+
+  result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
+  formatter.print(result);
+
+  return result;
+}
+
+interface ReviewStackGroupIncrementalArgs {
+  group: StackGroup;
+  ctx: PullRequestContext;
+  config: ReviewerConfig;
+  mergedRulesText: string;
+  resolvedModel: string;
+  projectDigest?: string;
+  priorFindings: ReadonlyArray<PriorFinding>;
+  formatter: OutputFormatter;
+}
+
+/** Incremental (verify-only) review of one stack group. */
+async function reviewStackGroupIncremental(args: ReviewStackGroupIncrementalArgs): Promise<ReviewResult> {
+  const { group, ctx, config, mergedRulesText, resolvedModel, projectDigest, priorFindings, formatter } = args;
+
+  const promptBuilder = new PromptBuilder();
+  const systemPrompt = promptBuilder.buildIncrementalSystemPrompt({
+    config,
+    tech: group.tech,
+    mergedRulesText,
+    projectDigest,
+  });
+  const userPrompt = promptBuilder.buildIncrementalUserPrompt({
+    files: group.files,
+    priorFindings,
+    prTitle: ctx.title,
+  });
+
+  const llmConfig: LLMConfig = {
+    provider: config.provider,
+    model: resolvedModel,
+    ollamaUrl: config.ollamaUrl,
+    temperature: 0.2,
+  };
+
+  const adapter = createLLMAdapter(llmConfig);
+  const providerDisplay = config.provider.charAt(0).toUpperCase() + config.provider.slice(1);
+  console.log(
+    chalk.dim(`Grupo "${group.dir}" (${TechDetector.displayName(group.tech)}): llamando a ${providerDisplay}...`),
+  );
+
+  const response = await adapter.review({ systemPrompt, userPrompt });
+  const parser = new ReviewJsonParser();
+  const parsed = parser.parse(response.content);
+  const result: ReviewResult = { ...parsed, tokensUsed: response.tokensUsed };
+
+  result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
+  formatter.print(result);
+
+  return result;
+}
+
 // Returns false when the caller should fall through to a full review (e.g. Compare API error).
 // Returns ReviewPRResult when regressions were found and posted.
 // Returns null when incremental review completed cleanly with no regressions to post.
@@ -135,13 +350,14 @@ async function runIncrementalReview(args: {
   pushShas: PushEventShas;
   priorFindings: ReadonlyArray<PriorFinding>;
   githubClient: GitHubClient;
-  mergedRulesText: string;
-  tech: TechStack;
+  buildRulesForTech: (tech: TechStack) => string;
+  detection: StackDetection;
+  cwd: string;
   resolvedModel: string;
   projectDigest?: string;
   opts: ReviewerCliOptions;
 }): Promise<ReviewPRResult | null | false> {
-  const { ctx, config, pushShas, priorFindings, githubClient, mergedRulesText, tech, resolvedModel, projectDigest, opts } = args;
+  const { ctx, config, pushShas, priorFindings, githubClient, buildRulesForTech, detection, cwd, resolvedModel, projectDigest, opts } = args;
 
   let incrementalFiles: ChangedFile[] = [];
   try {
@@ -179,33 +395,28 @@ async function runIncrementalReview(args: {
   let result: ReviewResult | null = null;
 
   if (filtered.length > 0) {
-    const promptBuilder = new PromptBuilder();
-    const systemPrompt = promptBuilder.buildIncrementalSystemPrompt({ config, tech, mergedRulesText, projectDigest });
-    const userPrompt = promptBuilder.buildIncrementalUserPrompt({
-      files: filtered,
-      priorFindings,
-      prTitle: ctx.title,
-    });
-
-    const llmConfig: LLMConfig = {
-      provider: config.provider,
-      model: resolvedModel,
-      ollamaUrl: config.ollamaUrl,
-      temperature: 0.2,
-    };
-
-    const adapter = createLLMAdapter(llmConfig);
-    const providerDisplay = config.provider.charAt(0).toUpperCase() + config.provider.slice(1);
-    console.log(chalk.dim(`Llamando a ${providerDisplay}...`));
-
-    const response = await adapter.review({ systemPrompt, userPrompt });
-    const parser = new ReviewJsonParser();
-    const parsed = parser.parse(response.content);
-    result = { ...parsed, tokensUsed: response.tokensUsed };
-
+    const grouper = new StackGrouper();
+    const groups = grouper.group({ cwd, files: filtered, maxStackGroups: config.maxStackGroups, detection });
+    const dirs = detection.dirs.map((d) => d.dir);
     const formatter = new OutputFormatter();
-    result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
-    formatter.print(result);
+
+    const entries: Array<{ group: StackGroup; result: ReviewResult }> = [];
+    for (const group of groups) {
+      const groupPriorFindings = priorFindings.filter((f) => (grouper.pickDir(f.file, dirs) ?? '.') === group.dir);
+      const groupResult = await reviewStackGroupIncremental({
+        group,
+        ctx,
+        config,
+        mergedRulesText: buildRulesForTech(group.tech),
+        resolvedModel,
+        projectDigest,
+        priorFindings: groupPriorFindings,
+        formatter,
+      });
+      entries.push({ group, result: groupResult });
+    }
+
+    result = mergeReviewResults(entries);
   }
 
   const resolver = new ThreadResolver({ githubClient });
@@ -292,36 +503,52 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
     );
   }
 
-  const { config, mergedRulesText, tech: detectedTech, resolvedModel, appCwd, projectDigest } = resolveConfig(opts);
+  const { config, buildRulesForTech, resolvedModel, cwd, projectDigest } = resolveConfig(opts);
   const formatter = new OutputFormatter();
 
   const pushShas = getPushEventShasFromEnv();
   const githubClient = new GitHubClient();
 
-  // Project context graph: read cached tech stack from hidden PR comment.
+  // Project context graph: read cached stack detection from hidden PR comment.
   // Skip if config.tech is explicitly set (explicit config always wins).
   const contextStore = new ProjectContextStore();
-  let foundContextBody: string | null = null;
-  let tech: TechStack = detectedTech;
+  const grouper = new StackGrouper();
+  const configuredDirs = StackGrouper.normalizeAppDirs(config.appDir);
 
-  if (!config.tech) {
+  let foundContextBody: string | null = null;
+  let detection: StackDetection;
+
+  if (config.tech) {
+    const forcedTech = config.tech as TechStack;
+    detection = { dirs: configuredDirs.map((dir) => ({ dir, tech: forcedTech })), rootTech: forcedTech };
+  } else {
     foundContextBody = await githubClient.findContextComment({
       owner: ctx.owner,
       repo: ctx.repo,
       pullNumber: ctx.pullNumber,
     });
+
+    let cached: StackDetection | null = null;
     if (foundContextBody !== null) {
       const cachedContext = contextStore.deserialize(foundContextBody);
-      if (cachedContext !== null && !contextStore.shouldInvalidate(cachedContext)) {
-        tech = cachedContext.tech;
-        console.log(chalk.dim(`✓ Tech stack leído del contexto del proyecto: ${tech}.`));
-      } else {
-        if (cachedContext !== null) {
-          console.log(chalk.yellow('⚠ Versión del reviewer cambió — re-detectando stack del proyecto.'));
+      if (cachedContext !== null) {
+        const candidate = contextToDetection(cachedContext);
+        const dirsMatch = sameDirs(candidate.dirs.map((d) => d.dir), configuredDirs);
+        if (!contextStore.shouldInvalidate(cachedContext) && dirsMatch) {
+          cached = candidate;
+          console.log(chalk.dim(`✓ Stack(s) leídos del contexto del proyecto: ${describeDetection(cached)}.`));
+        } else {
+          console.log(
+            chalk.yellow(
+              '⚠ Versión del reviewer o directorios configurados (appDir) cambiaron — re-detectando stack(s) del proyecto.',
+            ),
+          );
         }
-        foundContextBody = null;
       }
+      if (cached === null) foundContextBody = null;
     }
+
+    detection = cached ?? grouper.detect({ appDir: config.appDir, cwd });
   }
 
   if (pushShas) {
@@ -330,10 +557,10 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
 
     if (priorFindings.length > 0) {
       console.log(chalk.bold(`Revisando PR #${ctx.pullNumber}: ${ctx.title} [modo incremental]`));
-      logHeader(tech, config.provider, resolvedModel, config.language);
+      logHeader(detection.rootTech, config.provider, resolvedModel, config.language);
 
       const incrementalResult = await runIncrementalReview({
-        ctx, config, pushShas, priorFindings, githubClient, mergedRulesText, tech, resolvedModel, projectDigest, opts,
+        ctx, config, pushShas, priorFindings, githubClient, buildRulesForTech, detection, cwd, resolvedModel, projectDigest, opts,
       });
 
       // false → Compare API error; fall through to full review.
@@ -344,7 +571,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   }
 
   console.log(chalk.bold(`Revisando PR #${ctx.pullNumber}: ${ctx.title}`));
-  logHeader(tech, config.provider, resolvedModel, config.language);
+  logHeader(detection.rootTech, config.provider, resolvedModel, config.language);
 
   const allFiles = await githubClient.getPullRequestFiles(ctx);
 
@@ -364,45 +591,24 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
 
   console.log(chalk.dim(`Archivos a revisar: ${filtered.length} / ${allFiles.length}`));
 
-  console.log(chalk.dim('Analizando grafo de dependencias...'));
-  const indexer = new DependencyGraphIndexer({ cwd: appCwd, files: filtered, tech });
-  const buildResult = await indexer.build();
+  const groups = grouper.group({ cwd, files: filtered, maxStackGroups: config.maxStackGroups, detection });
 
-  let dependencyIndex: string | undefined;
-  if (buildResult.status === 'ok') {
-    dependencyIndex = buildResult.index;
-    const edgeCount =
-      (dependencyIndex.match(/→/g) ?? []).length + (dependencyIndex.match(/←/g) ?? []).length;
-    console.log(chalk.dim(`Grafo listo: ${filtered.length} archivos, ${edgeCount} relaciones.`));
-    if (dependencyIndex.endsWith('...(truncated)')) {
-      console.log(chalk.dim('Grafo truncado a 8.000 caracteres.'));
-    }
-  } else if (buildResult.status === 'unsupported') {
-    console.log(chalk.dim(`Grafo de dependencias: stack "${TechDetector.displayName(tech)}" no soportado, se omite.`));
-  } else if (buildResult.status === 'timeout') {
-    console.log(chalk.dim('Grafo de dependencias: madge timeout, se omite.'));
-  } else {
-    console.log(chalk.dim(`Grafo de dependencias: madge falló, se omite.`));
-    if (process.env.DEBUG) console.error(chalk.dim(`[DEBUG] madge: ${buildResult.detail}`));
+  const entries: Array<{ group: StackGroup; result: ReviewResult }> = [];
+  for (const group of groups) {
+    const groupResult = await reviewStackGroup({
+      group,
+      ctx,
+      githubClient,
+      config,
+      mergedRulesText: buildRulesForTech(group.tech),
+      resolvedModel,
+      projectDigest,
+      formatter,
+    });
+    entries.push({ group, result: groupResult });
   }
 
-  await loadFileContentBudgeted({ githubClient, ctx, files: filtered });
-
-  const result = await callLLM({
-    files: filtered,
-    prTitle: ctx.title,
-    prBody: ctx.body,
-    config,
-    mergedRulesText,
-    tech,
-    resolvedModel,
-    dependencyIndex,
-    projectDigest,
-  });
-
-  result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
-
-  formatter.print(result);
+  const result = mergeReviewResults(entries);
 
   if (opts.save) {
     const { writeFileSync } = await import('node:fs');
@@ -473,8 +679,9 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
   // Write context graph after first full review (when no prior context existed).
   if (foundContextBody === null) {
     const contextToSave: ProjectContext = {
-      tech,
-      appDir: config.appDir,
+      tech: detection.rootTech,
+      appDir: typeof config.appDir === 'string' ? config.appDir : undefined,
+      stackMap: detectionToStackMap(detection),
       reviewerVersion: REVIEWER_VERSION,
       detectedAt: new Date().toISOString(),
     };
@@ -484,7 +691,7 @@ export async function reviewPullRequest(opts: ReviewerCliOptions): Promise<Revie
       pullNumber: ctx.pullNumber,
       body: contextStore.serialize(contextToSave),
     });
-    console.log(chalk.dim(`✓ Contexto del proyecto guardado (tech: ${tech}).`));
+    console.log(chalk.dim(`✓ Contexto del proyecto guardado (${describeDetection(detection)}).`));
   }
 
   if (event === 'REQUEST_CHANGES') {
@@ -715,7 +922,7 @@ export async function reviewLocalDiff(
 }
 
 async function callLLM(args: {
-  files: ChangedFile[];
+  files: ReadonlyArray<ChangedFile>;
   prTitle?: string;
   prBody?: string | null;
   config: ReviewerConfig;

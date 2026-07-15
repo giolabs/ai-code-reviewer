@@ -138,6 +138,48 @@ describe('TechDetector', () => {
     });
   });
 
+  describe('detectAll', () => {
+    it('should detect a different stack per directory', () => {
+      // Arrange
+      mkdirSync(join(tempDir, 'apps/web'), { recursive: true });
+      writeFileSync(join(tempDir, 'apps/web', 'pubspec.yaml'), 'name: my_app\n');
+      mkdirSync(join(tempDir, 'apps/api'), { recursive: true });
+      writePackageJson(join(tempDir, 'apps/api'), { '@nestjs/core': '10.0.0' });
+      const detector = new TechDetector({ cwd: tempDir });
+
+      // Act
+      const result = detector.detectAll(['apps/web', 'apps/api']);
+
+      // Assert
+      expect(result).toEqual([
+        { dir: 'apps/web', tech: 'flutter' },
+        { dir: 'apps/api', tech: 'nestjs' },
+      ]);
+    });
+
+    it('should return generic for a configured directory that does not exist on disk', () => {
+      // Arrange
+      const detector = new TechDetector({ cwd: tempDir });
+
+      // Act
+      const result = detector.detectAll(['does/not/exist']);
+
+      // Assert
+      expect(result).toEqual([{ dir: 'does/not/exist', tech: 'generic' }]);
+    });
+
+    it('should return an empty array when given no directories', () => {
+      // Arrange
+      const detector = new TechDetector({ cwd: tempDir });
+
+      // Act
+      const result = detector.detectAll([]);
+
+      // Assert
+      expect(result).toEqual([]);
+    });
+  });
+
   describe('displayName (static)', () => {
     it.each<[TechStack, string]>([
       ['nestjs', 'NestJS'],

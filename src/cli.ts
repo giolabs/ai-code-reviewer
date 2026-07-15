@@ -156,6 +156,22 @@ language: es
 # Options: nestjs | react | nextjs | typescript | node | flutter | laravel | generic
 # tech: nestjs
 
+# Subdirectory (relative to repo root) where a subproject's package.json/pubspec.yaml/
+# composer.json lives. Use this in monorepos where the app is not at the repository root.
+# Accepts a single directory or a list of directories when the monorepo has multiple
+# subprojects with independent stacks (e.g. a Flutter app + a NestJS backend) — each
+# changed file is reviewed with the rules of whichever configured directory is its
+# longest matching path prefix. Files outside every configured directory fall back to
+# the stack detected at the repo root.
+# appDir: apps/web
+# appDir: [apps/web, apps/api]
+
+# Maximum number of distinct tech-stack groups reviewed with their own LLM call per PR
+# (only relevant when appDir is a list). Extra groups (smallest by changed-file count)
+# are folded into the fallback/root group instead of growing the LLM call count without
+# bound.
+maxStackGroups: 4
+
 # Optional path to a markdown file with custom project rules.
 # These rules are appended to the system prompt and take priority over built-in rules.
 # rules: ./code-review-rules.md

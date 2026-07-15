@@ -13,7 +13,7 @@ All four conditions must be met simultaneously:
 3. No `critical` or `major` findings in the review
 4. `overallScore` ≥ `autoApprove.minScore` (default: 7), **or** the model didn't return a score
 
-If any condition fails, the bot falls back to `COMMENT` and explains why it didn't approve.
+If condition 3 fails — any `critical` or `major` finding is present — the bot **always** posts `REQUEST_CHANGES` and blocks the PR, regardless of the model's own recommendation or score. This is not skippable by config; it's a hard rule, not part of the auto-approve opt-in. If a different condition fails (no blocking findings, but the model didn't recommend `approve` or the score is too low), the bot falls back to `COMMENT` and explains why it didn't approve.
 
 ## Setup
 
@@ -47,8 +47,8 @@ When the bot falls back to `COMMENT` instead of `APPROVE`, it includes the reaso
 | Skip reason | Message |
 |---|---|
 | Feature disabled | *(feature not active — no message)* |
+| Critical/major findings present | Posted as `REQUEST_CHANGES` (forced, not a `COMMENT` fallback) — "se fuerza Request Changes ... sin importar el score o la recomendación del modelo" |
 | Model didn't recommend approve | "Model recommendation: `request_changes` / `comment`" |
-| Critical/major findings present | "Found N blocking finding(s)" |
 | Score below threshold | "Score X is below minimum Y" |
 
 ## Example

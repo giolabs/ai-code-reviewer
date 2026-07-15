@@ -52,6 +52,19 @@ export class TechDetector {
   }
 
   /**
+   * Detects the tech stack independently for each of the given directories
+   * (relative to this detector's cwd). `detect()` itself is not reused
+   * directly since it reads `this.cwd`, fixed at construction — each
+   * directory gets its own short-lived TechDetector instance instead.
+   */
+  detectAll(dirs: ReadonlyArray<string>): ReadonlyArray<{ dir: string; tech: TechStack }> {
+    return dirs.map((dir) => ({
+      dir,
+      tech: new TechDetector({ cwd: resolve(this.cwd, dir) }).detect(),
+    }));
+  }
+
+  /**
    * Reads the installed major version of the primary framework for the given
    * stack from `package.json`. Returns null for non-JS stacks or when absent.
    * Deterministic and offline (Axis 8A).

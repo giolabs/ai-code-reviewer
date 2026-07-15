@@ -54,13 +54,30 @@ export class ProjectContextStore {
         )
       : undefined;
 
+    const stackMap = this.parseStackMap(obj['stackMap']);
+
     return {
       tech: obj['tech'] as ProjectContext['tech'],
       appDir: typeof obj['appDir'] === 'string' ? obj['appDir'] : undefined,
       reviewerVersion: obj['reviewerVersion'],
       detectedAt: obj['detectedAt'],
       ...(suppressed !== undefined ? { suppressedFingerprints: suppressed } : {}),
+      ...(stackMap !== undefined ? { stackMap } : {}),
     };
+  }
+
+  private parseStackMap(raw: unknown): ReadonlyArray<{ dir: string; tech: ProjectContext['tech'] }> | undefined {
+    if (!Array.isArray(raw)) return undefined;
+
+    const entries: Array<{ dir: string; tech: ProjectContext['tech'] }> = [];
+    for (const item of raw) {
+      if (typeof item !== 'object' || item === null) return undefined;
+      const entry = item as Record<string, unknown>;
+      if (typeof entry['dir'] !== 'string') return undefined;
+      if (typeof entry['tech'] !== 'string' || !VALID_TECH_STACKS.has(entry['tech'])) return undefined;
+      entries.push({ dir: entry['dir'], tech: entry['tech'] as ProjectContext['tech'] });
+    }
+    return entries;
   }
 
   shouldInvalidate(context: ProjectContext): boolean {

@@ -170,7 +170,9 @@ export class OpenAIAdapter extends LLMAdapter {
         type: 'json_schema',
         json_schema: REVIEW_SCHEMA,
       },
-      temperature: this.config.temperature ?? 0.2,
+      ...(this.supportsCustomTemperature(this.config.model)
+        ? { temperature: this.config.temperature ?? 0.2 }
+        : {}),
     });
 
     const choice = response.choices[0];
@@ -188,5 +190,10 @@ export class OpenAIAdapter extends LLMAdapter {
           }
         : undefined,
     };
+  }
+
+  /** Reasoning models (o1/o3/o4/gpt-5 families) only accept the default temperature (1). */
+  private supportsCustomTemperature(model: string): boolean {
+    return !/^(o1|o3|o4|gpt-5)/i.test(model);
   }
 }

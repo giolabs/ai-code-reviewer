@@ -19,6 +19,15 @@ language: es
 # Tech stack. Omit to auto-detect from package.json
 # tech: nestjs
 
+# Monorepo: subdirectory (or list of subdirectories) where a subproject's
+# package.json/pubspec.yaml/composer.json lives. See Tech Stacks > Monorepos.
+# appDir: apps/web
+# appDir: [apps/web, apps/api]
+
+# Cap on distinct stack groups reviewed with their own LLM call per PR
+# (only relevant when appDir is a list).
+maxStackGroups: 4
+
 # Additional custom rules (markdown). Appended to the system prompt.
 # rules: ./code-review-rules.md
 
@@ -95,6 +104,18 @@ Language the reviewer uses for finding descriptions and the PR summary.
 Force a specific tech stack instead of auto-detecting.
 
 **Default:** auto-detected | **Options:** `nestjs` | `nextjs` | `react` | `typescript` | `node` | `flutter` | `laravel` | `generic`
+
+### `appDir`
+
+Subdirectory (or list of subdirectories) where a subproject's `package.json`/`pubspec.yaml`/`composer.json` lives, for monorepos where the app isn't at the repo root. A list enables multi-stack review — see [Tech Stacks > Monorepos](./tech-stacks#monorepos-multiple-stacks).
+
+**Default:** unset (detect at repo root) | **Type:** `string` | `string[]`
+
+### `maxStackGroups`
+
+Cap on the number of distinct tech-stack groups reviewed with their own LLM call per PR. Only relevant when `appDir` is a list. Extra groups (smallest by changed-file count) are folded into the fallback/root group.
+
+**Default:** `4`
 
 ### `rules`
 

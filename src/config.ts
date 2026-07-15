@@ -58,6 +58,7 @@ export const DEFAULT_CONFIG: ReviewerConfig = {
   inlineComments: true,
   summaryComment: true,
   maxInlineComments: 20,
+  maxStackGroups: 4,
   selfCritique: {
     enabled: true,
     confidenceThreshold: 0.6,

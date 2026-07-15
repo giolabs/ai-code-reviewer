@@ -27,6 +27,33 @@ tech: nestjs
 
 Valid values: `nestjs` | `nextjs` | `react` | `typescript` | `node` | `flutter` | `laravel` | `generic`
 
+## Monorepos (multiple stacks)
+
+If your app's `package.json`/`pubspec.yaml`/`composer.json` isn't at the repo root, set `appDir` in `.ai-review.yml` so detection looks in the right place:
+
+```yaml
+appDir: apps/web
+```
+
+When a monorepo has **multiple subprojects with independent stacks** (e.g. a Flutter app and a NestJS backend in the same PR), pass a list instead of a single string:
+
+```yaml
+appDir:
+  - apps/web       # Flutter
+  - apps/api       # NestJS
+  - packages/shared_types
+```
+
+Each changed file is reviewed with the rules of whichever configured directory is its **longest matching path prefix** — a file under `apps/web/lib/` gets Flutter rules, a file under `apps/api/src/` gets NestJS rules. Files outside every configured directory (a root `README.md`, a workflow YAML) fall back to the stack detected at the repo root.
+
+Under the hood, one LLM call runs per detected stack, and the results are merged into a single PR review: the worst recommendation across groups wins (a `major` finding in any one subproject forces `REQUEST_CHANGES` for the whole PR — see [Auto-Approve](./auto-approve)), and the summary is split into a section per group.
+
+To bound cost on repos with many subprojects, only the largest `maxStackGroups` groups (default `4`) get their own LLM call — extras are folded into the root/fallback group instead of growing the call count without limit:
+
+```yaml
+maxStackGroups: 4
+```
+
 ## Stack-specific rules
 
 ### NestJS (`nestjs`)

@@ -76,12 +76,24 @@ export interface ReviewerConfig {
   /** Official stack docs grounding (opt-in, disabled by default) */
   officialDocs?: OfficialDocsConfig;
   /**
-   * Subdirectory (relative to repo root) where the app's package.json lives.
-   * Use this in monorepos where the app is not at the repository root.
-   * Affects tech detection and dependency graph analysis.
-   * Example: `appDir: site/app`
+   * Subdirectory (relative to repo root) where a subproject's package.json/
+   * pubspec.yaml/composer.json lives. Use this in monorepos where the app is
+   * not at the repository root. Affects tech detection and dependency graph
+   * analysis. Accepts a single directory or a list of directories when the
+   * monorepo has multiple subprojects with independent stacks — each changed
+   * file is reviewed with the rules of the configured directory that is its
+   * longest matching path prefix; files outside every configured directory
+   * fall back to the stack detected at the repo root.
+   * Example: `appDir: site/app` or `appDir: [apps/web, apps/api]`
    */
-  appDir?: string;
+  appDir?: string | ReadonlyArray<string>;
+  /**
+   * Maximum number of distinct tech-stack groups reviewed with their own LLM
+   * call per PR. Extra groups (smallest by changed-file count) are folded
+   * into the fallback/root group instead of growing the call count without
+   * bound. Default 4.
+   */
+  maxStackGroups: number;
 }
 
 /**
@@ -164,6 +176,21 @@ export interface ChangedFile {
   additions: number;
   /** Removed lines */
   deletions: number;
+}
+
+/**
+ * A set of changed files that share the same detected tech stack, reviewed
+ * together with one LLM call and that stack's own rules template.
+ */
+export interface StackGroup {
+  /** Configured directory this group was assigned to (relative to repo root), or '.' for the fallback group */
+  dir: string;
+  /** Tech stack detected for `dir` */
+  tech: TechStack;
+  /** Absolute filesystem path used for tech detection / dependency graph analysis for this group */
+  appCwd: string;
+  /** Changed files assigned to this group (repo-root-relative paths) */
+  files: ReadonlyArray<ChangedFile>;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,10 +347,16 @@ export interface PushEventShas {
  * Used by subsequent reviews to skip TechDetector re-detection.
  */
 export interface ProjectContext {
-  /** Tech stack detected on first review */
+  /** Tech stack detected on first review (root/fallback stack when stackMap is present) */
   tech: TechStack;
-  /** Value of config.appDir at detection time, or undefined if not set */
+  /** Value of config.appDir at detection time, or undefined if not set. Legacy single-dir form; superseded by stackMap. */
   appDir: string | undefined;
+  /**
+   * Per-directory tech stack detected on first review, one entry per
+   * configured `appDir` directory. Absent for caches written before
+   * multi-stack support existed (falls back to `tech`/`appDir`).
+   */
+  stackMap?: ReadonlyArray<{ dir: string; tech: TechStack }>;
   /** Reviewer package version that wrote this context */
   reviewerVersion: string;
   /** ISO 8601 timestamp of detection */
