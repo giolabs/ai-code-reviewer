@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.1.0-beta.16] – 2026-07-15
+
+### Features
+- persistent cross-PR Learnings (opt-in, `learnings.enabled`): rules captured via `@botai learn """rule"""` or auto-captured from `@botai dismiss` are committed to `.ai-review-learnings.md` on the PR's base branch and injected into every future review of that branch — previously `suppressedFingerprints`/dismiss state was scoped to one PR, so a false positive dismissed in one PR would be flagged fresh again in the next. Requires `contents: write` in addition to `pull-requests: write`.
+- `@botai ask """question"""` general-purpose Q&A command, usable inline (answers using the surrounding code, no finding metadata required) and from a general PR comment (answers using the PR's AI Code Review summary). Never triggers a re-review.
+
 ## [v0.1.0-beta.15] – 2026-07-15
 
 ### Features

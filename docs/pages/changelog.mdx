@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-beta.16
+
+- **Persistent cross-PR Learnings** (opt-in — `learnings.enabled` in `.ai-review.yml`): rules captured via `@botai learn """rule"""`, or auto-captured from `@botai dismiss`, are committed to `.ai-review-learnings.md` on the PR's base branch and injected into every future review of that branch. Previously, per-PR suppression meant a false positive dismissed in one PR would be flagged fresh again in the next. Requires `contents: write` in addition to `pull-requests: write` on the `handle-feedback` job. See [Inline Feedback](./handle-feedback#botai-learn).
+- **`@botai ask """question"""`**: general-purpose Q&A, distinct from `@botai explain` (which requires a specific finding thread). Works inline (uses the surrounding code, no finding metadata required) and from a general PR comment (uses the PR's AI Code Review summary). Never triggers a re-review. See [Inline Feedback](./handle-feedback#botai-ask).
+
 ## 0.1.0-beta.15
 
 - **Orphan finding tracking**: findings that can't map to a diff line are now tagged with an embedded marker in the summary comment and fed into incremental "prior open findings," instead of having no metadata at all. Previously, a PR whose only blocking finding was an orphan could never enter incremental mode — every push re-ran a full review from scratch and could re-flag the same finding forever, with no `@botai dismiss` path since there's no inline thread to reply to.
