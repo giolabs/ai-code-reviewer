@@ -75,6 +75,8 @@ export interface ReviewerConfig {
   projectContext?: ProjectContextConfig;
   /** Official stack docs grounding (opt-in, disabled by default) */
   officialDocs?: OfficialDocsConfig;
+  /** Persistent cross-PR Learnings (opt-in, disabled by default — requires `contents: write`) */
+  learnings?: LearningsConfig;
   /**
    * Subdirectory (relative to repo root) where a subproject's package.json/
    * pubspec.yaml/composer.json lives. Use this in monorepos where the app is
@@ -203,10 +205,19 @@ export enum FindingStatus {
   Resolved = 'resolved',
 }
 
-export type BotCommand = 'approved' | 'review' | 'resolved' | 'dismiss' | 'explain' | 'unknown';
+export type BotCommand =
+  | 'approved'
+  | 'review'
+  | 'resolved'
+  | 'dismiss'
+  | 'explain'
+  | 'learn'
+  | 'ask'
+  | 'unknown';
 
 export interface BotCommandParseResult {
   command: BotCommand;
+  /** Free text captured between """ """ — reused for review/dismiss/learn/ask. */
   reviewText?: string;
 }
 
@@ -233,6 +244,19 @@ export interface AutoApproveConfig {
   enabled: boolean;
   /** Minimum overallScore (0–10) required to auto-approve. Ignored when score is absent. */
   minScore: number;
+}
+
+/**
+ * Persistent cross-PR Learnings (opt-in). Rules captured via `@botai learn`
+ * or auto-captured from `@botai dismiss` are committed to
+ * `.ai-review-learnings.md` on the PR's base branch and injected into every
+ * future review's system prompt for that branch — unlike
+ * `suppressedFingerprints`, which stays scoped to one PR.
+ */
+export interface LearningsConfig {
+  enabled: boolean;
+  /** Max characters of learnings text injected into the prompt; oldest entries are dropped first past this limit. */
+  maxChars: number;
 }
 
 /**
@@ -339,6 +363,8 @@ export interface PullRequestContext {
   headSha: string;
   /** Base branch SHA */
   baseSha: string;
+  /** Base branch name (e.g. "main", "develop") — used to commit persistent Learnings updates. */
+  baseRefName: string;
   /** PR title */
   title: string;
   /** PR body */

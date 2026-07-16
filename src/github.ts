@@ -176,6 +176,60 @@ export class GitHubClient {
     }
   }
 
+  /** Reads a file's content and blob `sha` — the `sha` is required to update the file via `createOrUpdateFile`. Returns null for a missing file (not yet created). */
+  async getFileWithSha(args: {
+    owner: string;
+    repo: string;
+    path: string;
+    ref: string;
+  }): Promise<{ content: string; sha: string } | null> {
+    try {
+      const response = await this.octokit.repos.getContent({
+        owner: args.owner,
+        repo: args.repo,
+        path: args.path,
+        ref: args.ref,
+      });
+
+      if (Array.isArray(response.data)) return null;
+      if (response.data.type !== 'file') return null;
+      if (!('content' in response.data)) return null;
+
+      return {
+        content: Buffer.from(response.data.content, 'base64').toString('utf-8'),
+        sha: response.data.sha,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Creates or updates a file with a direct commit to `branch`. Pass `sha`
+   * (from `getFileWithSha`) when updating an existing file; omit it to
+   * create a new one — GitHub rejects a create call that includes a stale
+   * `sha` and an update call that omits it.
+   */
+  async createOrUpdateFile(args: {
+    owner: string;
+    repo: string;
+    path: string;
+    branch: string;
+    message: string;
+    content: string;
+    sha?: string;
+  }): Promise<void> {
+    await this.octokit.repos.createOrUpdateFileContents({
+      owner: args.owner,
+      repo: args.repo,
+      path: args.path,
+      branch: args.branch,
+      message: args.message,
+      content: Buffer.from(args.content, 'utf-8').toString('base64'),
+      ...(args.sha !== undefined ? { sha: args.sha } : {}),
+    });
+  }
+
   /**
    * Posts a review on the PR with inline comments and upserts the single
    * "AI Code Review" summary comment (created once, edited in place on every
@@ -388,6 +442,7 @@ export class GitHubClient {
           nodeId: c.node_id,
           body: c.body,
           path: c.path,
+          line: c.line ?? c.original_line ?? null,
           user: c.user?.login ?? '',
           pullRequestReviewId: c.pull_request_review_id ?? null,
         });
@@ -413,6 +468,7 @@ export class GitHubClient {
         nodeId: data.node_id,
         body: data.body,
         path: data.path,
+        line: data.line ?? data.original_line ?? null,
         user: data.user?.login ?? '',
         pullRequestReviewId: data.pull_request_review_id ?? null,
       };
@@ -453,6 +509,7 @@ export class GitHubClient {
         pullNumber,
         headSha: data.head.sha,
         baseSha: data.base.sha,
+        baseRefName: data.base.ref,
         title: data.title,
         body: data.body,
       };
@@ -753,6 +810,8 @@ export interface PrReviewComment {
   nodeId: string;
   body: string;
   path: string;
+  /** Line on the new side of the diff, or null (e.g. an outdated/moved comment). */
+  line: number | null;
   user: string;
   pullRequestReviewId: number | null;
 }
@@ -831,6 +890,7 @@ export function getPullRequestContextFromEnv(): PullRequestContext | null {
     pullNumber: pr.number as number,
     headSha: (head?.sha as string) ?? '',
     baseSha: (base?.sha as string) ?? '',
+    baseRefName: (base?.ref as string) ?? '',
     title: (pr.title as string) ?? '',
     body: (pr.body as string | null) ?? null,
   };

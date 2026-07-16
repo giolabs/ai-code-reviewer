@@ -25,6 +25,7 @@ import {
 import type { PrReview, PrReviewComment } from './github.js';
 import { ThreadResolver } from './thread-resolver.js';
 import { ProjectContextStore, REVIEWER_VERSION } from './project-context.js';
+import { LearningsStore } from './learnings-store.js';
 import type {
   ChangedFile,
   ReviewerConfig,
@@ -540,6 +541,22 @@ export async function reviewPullRequest(
 
   const pushShas = getPushEventShasFromEnv();
   const githubClient = new GitHubClient();
+
+  // Persistent cross-PR Learnings (opt-in): merged into customInstructions,
+  // same injection point PromptBuilder already uses for the static config field.
+  if (config.learnings?.enabled) {
+    const learningsText = await new LearningsStore().read({
+      githubClient,
+      owner: ctx.owner,
+      repo: ctx.repo,
+      baseRefName: ctx.baseRefName,
+    });
+    if (learningsText) {
+      config.customInstructions = [config.customInstructions, learningsText]
+        .filter((s): s is string => Boolean(s))
+        .join('\n\n');
+    }
+  }
 
   // Project context graph: read cached stack detection from hidden PR comment.
   // Skip if config.tech is explicitly set (explicit config always wins).

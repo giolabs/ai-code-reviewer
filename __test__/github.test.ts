@@ -266,7 +266,7 @@ describe('getPullRequestContextFromEnv', () => {
         title: 'Fix auth bug',
         body: 'Fixes the login crash',
         head: { sha: 'abc123def456' },
-        base: { sha: '111222333444' },
+        base: { sha: '111222333444', ref: 'develop' },
       },
     };
     const filePath = writeTempEvent(payload);
@@ -283,6 +283,7 @@ describe('getPullRequestContextFromEnv', () => {
       pullNumber: 42,
       headSha: 'abc123def456',
       baseSha: '111222333444',
+      baseRefName: 'develop',
       title: 'Fix auth bug',
       body: 'Fixes the login crash',
     });

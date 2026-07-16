@@ -77,6 +77,11 @@ feedback:
 autoApprove:
   enabled: true
   minScore: 7
+
+# Persistent cross-PR Learnings (opt-in, requires contents: write on the workflow)
+learnings:
+  enabled: true
+  maxChars: 4000
 ```
 
 ## Field reference
@@ -193,3 +198,21 @@ When the model recommends `approve` and there are no `critical` or `major` findi
 Minimum `overallScore` (0–10) required to auto-approve. If the score is below this threshold, the bot falls back to `COMMENT`. Ignored when `overallScore` is absent from the model response.
 
 **Default:** `7`
+
+### `learnings`
+
+Persistent cross-PR memory. Rules captured via `@botai learn` or auto-captured from `@botai dismiss` are committed to `.ai-review-learnings.md` on the PR's base branch and injected into every future review of that branch — unlike `suppressedFingerprints`, which stays scoped to one PR. Requires the `handle-feedback` workflow job with `contents: write` (not just `pull-requests: write`). See [Inline Feedback](./handle-feedback#botai-learn).
+
+```yaml
+learnings:
+  enabled: true
+  maxChars: 4000
+```
+
+**Default:** disabled (unset)
+
+### `learnings.maxChars`
+
+Max characters of learnings text injected into the system prompt. Past this limit, the oldest entries are dropped first (FIFO) — the file itself is never truncated below one entry.
+
+**Default:** `4000`

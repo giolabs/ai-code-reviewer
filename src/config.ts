@@ -10,6 +10,7 @@ import type {
   SelfCritiqueConfig,
   ProjectContextConfig,
   OfficialDocsConfig,
+  LearningsConfig,
 } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -147,6 +148,13 @@ export class ConfigLoader {
         }
       : undefined;
 
+    const learnings: LearningsConfig | undefined = parsed.learnings
+      ? {
+          enabled: parsed.learnings.enabled ?? false,
+          maxChars: parsed.learnings.maxChars ?? 4_000,
+        }
+      : undefined;
+
     const selfCritique: SelfCritiqueConfig = {
       enabled: parsed.selfCritique?.enabled ?? DEFAULT_CONFIG.selfCritique!.enabled,
       confidenceThreshold:
@@ -174,6 +182,7 @@ export class ConfigLoader {
       officialDocs,
       ...(feedback !== undefined ? { feedback } : {}),
       ...(autoApprove !== undefined ? { autoApprove } : {}),
+      ...(learnings !== undefined ? { learnings } : {}),
     };
   }
 

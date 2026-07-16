@@ -4,7 +4,7 @@ The inline feedback feature lets developers interact with the bot directly from 
 
 ## Commands
 
-`@botai resolved`, `@botai dismiss`, and `@botai explain` only work inside an **inline thread** (a PR review comment reply), since they act on one specific finding. `@botai approved` and `@botai review` also work from a **general PR comment**.
+`@botai resolved` and `@botai dismiss` only work inside an **inline thread** (a PR review comment reply), since they act on one specific finding. `@botai explain` and `@botai ask` also require inline context but don't require the parent to be a bot finding. `@botai approved`, `@botai review`, `@botai ask`, and `@botai learn` also work from a **general PR comment**.
 
 | Reply | Where | What happens |
 |---|---|---|
@@ -12,6 +12,8 @@ The inline feedback feature lets developers interact with the bot directly from 
 | `@botai review """your explanation"""` | Inline thread | The bot reads your explanation, fetches the current file state, and asks the LLM whether that one finding is resolved. It always posts a reply with its decision |
 | `@botai review` | General comment | Re-runs the **full PR review**, feeding in your explanation (quoted with `"""..."""` in the same comment, or written in earlier general comments since the bot's last review) so the model can recognize when a previously flagged concern is already addressed instead of repeating it |
 | `@botai resolved` | Inline thread | The bot immediately marks the finding as resolved and closes the thread. If all open bot findings are now resolved, it auto-approves the PR |
+| `@botai ask """question"""` | Inline thread or general comment | Answers a free-form question — inline it uses the surrounding code, general comment it uses the PR summary. Never triggers a re-review |
+| `@botai learn """rule"""` | Inline thread or general comment | Saves the rule to a repo-level Learnings file, applied to every future review of the PR's base branch — requires `learnings.enabled: true` |
 
 ## Setup
 
@@ -64,7 +66,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-      contents: read
+      # `contents: write` is only required if `learnings.enabled: true` — @botai learn
+      # and the auto-capture on @botai dismiss commit .ai-review-learnings.md directly
+      # to the PR's base branch. Use `contents: read` if you don't enable Learnings.
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -168,6 +173,41 @@ Bot: Finding resolved by @lucasgio.
 ```
 
 If this was the last open bot finding on the PR, the bot also submits an APPROVE review automatically.
+
+## @botai ask
+
+Ask anything about the PR without anchoring to one specific finding, and without triggering a re-review. Works two ways:
+
+```
+# Inline — uses the code around the comment
+Bot: 🟠 major — Registry not populated at bootstrap
+
+Developer (reply): @botai ask """why does this only affect mercado_libre and not tiendanube?"""
+
+Bot: Because only mercado_libre is registered in the CHANNEL_PROVIDERS_FACTORY
+in channels.module.ts — tiendanube has no adapter wired yet, so it's...
+
+# General comment — uses the PR's AI Code Review summary
+Developer (general comment): @botai ask """what does this PR change in the public API?"""
+
+Bot: This PR doesn't change any existing endpoint contracts. It adds capability
+resolution to GET /channels/available — status and capabilities[] are now...
+```
+
+## @botai learn
+
+Requires `learnings.enabled: true` in `.ai-review.yml` (opt-in — see [Configuration](./configuration#learnings)). Saves a rule to `.ai-review-learnings.md`, committed directly to the PR's base branch, and every future review of that branch includes it in the system prompt — not just this PR.
+
+```
+Developer (general comment): @botai learn """No reportar console.log en scripts/migrations/**, es intencional para logging de migración."""
+
+Bot: Aprendizaje guardado en `.ai-review-learnings.md` (rama `develop`). Se va
+a tener en cuenta en las próximas reviews de este repo.
+```
+
+`@botai dismiss` on an inline finding also auto-captures an entry (the finding's title plus your dismiss reason, if you gave one) — you don't need to also run `@botai learn` for a one-off false positive you've already dismissed. Use `@botai learn` for rules you want applied *before* they'd otherwise be flagged.
+
+The file is plain markdown — open it and delete a line directly to retract a learning; there's no `@botai forget` command.
 
 ## Auto-resolve on push
 

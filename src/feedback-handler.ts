@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import type { GitHubClient } from './github.js';
 import { PromptBuilder } from './prompts.js';
+import { LearningsStore } from './learnings-store.js';
 import type {
   BotCommandParseResult,
   FeedbackConfig,
@@ -25,12 +26,14 @@ export class FeedbackHandler {
   private readonly config: ReviewerConfig;
   private readonly llmCall: (prompt: string) => Promise<string>;
   private readonly promptBuilder: PromptBuilder;
+  private readonly learningsStore: LearningsStore;
 
   constructor(options: FeedbackHandlerOptions) {
     this.githubClient = options.githubClient;
     this.config = options.config;
     this.llmCall = options.llmCall;
     this.promptBuilder = new PromptBuilder();
+    this.learningsStore = new LearningsStore();
   }
 
   async handle(event: FeedbackEvent): Promise<FeedbackHandleResult> {
@@ -48,6 +51,16 @@ export class FeedbackHandler {
       return NO_REVIEW;
     }
 
+    // learn/ask need no parent finding and work from either source.
+    if (parsed.command === 'learn') {
+      await this.handleLearn(event, parsed.reviewText ?? '');
+      return NO_REVIEW;
+    }
+    if (parsed.command === 'ask') {
+      await this.handleAsk(event, parsed.reviewText ?? '');
+      return NO_REVIEW;
+    }
+
     if (event.source === 'issue_comment') {
       if (parsed.command === 'review') {
         return this.handleGeneralReview(event, parsed.reviewText ?? '');
@@ -55,8 +68,8 @@ export class FeedbackHandler {
 
       const msg =
         this.config.language === 'es'
-          ? `\`@botai ${parsed.command}\` solo funciona en respuestas a comentarios inline del diff. Usá \`@botai approved\` o \`@botai review\` desde un comentario general.`
-          : `\`@botai ${parsed.command}\` only works in inline diff thread replies. Use \`@botai approved\` or \`@botai review\` from a general PR comment.`;
+          ? `\`@botai ${parsed.command}\` solo funciona en respuestas a comentarios inline del diff. Usá \`@botai approved\`, \`@botai review\` o \`@botai ask\` desde un comentario general.`
+          : `\`@botai ${parsed.command}\` only works in inline diff thread replies. Use \`@botai approved\`, \`@botai review\`, or \`@botai ask\` from a general PR comment.`;
       await this.postReply(event, msg);
       return NO_REVIEW;
     }
@@ -81,7 +94,12 @@ export class FeedbackHandler {
         reviewText: parsed.reviewText ?? '',
       });
     } else if (parsed.command === 'dismiss') {
-      await this.handleDismiss({ event, metadata, parentBody: parentComment.body });
+      await this.handleDismiss({
+        event,
+        metadata,
+        parentBody: parentComment.body,
+        reason: parsed.reviewText ?? '',
+      });
     } else if (parsed.command === 'explain') {
       await this.handleExplain({ event, metadata, parentBody: parentComment.body });
     } else {
@@ -104,14 +122,14 @@ export class FeedbackHandler {
   }
 
   private parseBotCommand(body: string): BotCommandParseResult {
-    const match = /@botai\s+(approved|review|resolved|dismiss|explain)/i.exec(body);
+    const match = /@botai\s+(approved|review|resolved|dismiss|explain|learn|ask)/i.exec(body);
     if (!match) return { command: 'unknown' };
 
     const keyword = match[1].toLowerCase() as Exclude<BotCommandParseResult['command'], 'unknown'>;
 
-    if (keyword === 'review') {
+    if (keyword === 'review' || keyword === 'dismiss' || keyword === 'learn' || keyword === 'ask') {
       const textMatch = /"""\s*([\s\S]+?)\s*"""/.exec(body);
-      return { command: 'review', reviewText: textMatch?.[1] ?? '' };
+      return { command: keyword, reviewText: textMatch?.[1] ?? '' };
     }
 
     return { command: keyword };
@@ -299,8 +317,9 @@ export class FeedbackHandler {
     event: FeedbackEvent;
     metadata: FindingMetadata;
     parentBody: string;
+    reason: string;
   }): Promise<void> {
-    const { event, metadata, parentBody } = args;
+    const { event, metadata, parentBody, reason } = args;
 
     const replyBody =
       this.config.language === 'es'
@@ -310,7 +329,7 @@ export class FeedbackHandler {
     await this.postReply(event, replyBody);
     await this.markStatus({ event, metadata, parentBody, status: FindingStatus.Dismissed });
 
-    // metadata.id is the finding fingerprint — suppress it permanently (Axis 2).
+    // metadata.id is the finding fingerprint — suppress it permanently within this PR (Axis 2).
     await this.githubClient.addSuppressedFingerprint({
       owner: event.owner,
       repo: event.repo,
@@ -319,6 +338,16 @@ export class FeedbackHandler {
     });
 
     console.log(chalk.dim(`@botai dismiss: finding ${metadata.id} descartado y suprimido.`));
+
+    // Repo-level Learnings (opt-in): auto-capture so the same pattern doesn't
+    // recur fresh in a future PR, in addition to the per-PR suppression above.
+    if (this.config.learnings?.enabled) {
+      const findingText = this.extractFindingTextFromBody(parentBody);
+      const summary = reason
+        ? `${findingText.title} — ${reason}`
+        : `Dismissed: ${findingText.title} (${metadata.file})`;
+      await this.saveLearning({ event, text: summary });
+    }
   }
 
   private async handleExplain(args: {
@@ -356,6 +385,130 @@ export class FeedbackHandler {
 
     await this.postReply(event, reply.slice(0, 4000));
     console.log(chalk.dim(`@botai explain: respondido para finding ${metadata.id}.`));
+  }
+
+  /** `@botai learn """rule"""` — general comment or inline, no parent finding required. */
+  private async handleLearn(event: FeedbackEvent, text: string): Promise<void> {
+    if (!this.config.learnings?.enabled) {
+      await this.postReply(
+        event,
+        this.config.language === 'es'
+          ? 'La funcionalidad de Learnings no está habilitada (`learnings.enabled: false` en `.ai-review.yml`).'
+          : 'The Learnings feature is not enabled (`learnings.enabled: false` in `.ai-review.yml`).',
+      );
+      return;
+    }
+
+    if (!text) {
+      await this.postReply(
+        event,
+        this.config.language === 'es'
+          ? 'Usá `@botai learn """tu regla en lenguaje natural"""`.'
+          : 'Use `@botai learn """your rule in natural language"""`.',
+      );
+      return;
+    }
+
+    await this.saveLearning({ event, text });
+  }
+
+  /** Shared by `handleLearn` (explicit) and `handleDismiss` (auto-capture). */
+  private async saveLearning(args: { event: FeedbackEvent; text: string }): Promise<void> {
+    const { event, text } = args;
+
+    const ctx = await this.githubClient.getPullRequestContext(event.owner, event.repo, event.pullNumber);
+    if (!ctx) {
+      await this.postReply(
+        event,
+        this.config.language === 'es'
+          ? 'No se pudo obtener el contexto del PR para guardar el aprendizaje.'
+          : 'Could not fetch PR context to save the learning.',
+      );
+      return;
+    }
+
+    const entry = LearningsStore.formatEntry({
+      text,
+      actor: event.actor,
+      pullNumber: event.pullNumber,
+      date: new Date().toISOString().slice(0, 10),
+    });
+
+    const saved = await this.learningsStore.append({
+      githubClient: this.githubClient,
+      owner: event.owner,
+      repo: event.repo,
+      baseRefName: ctx.baseRefName,
+      entry,
+      maxChars: this.config.learnings!.maxChars,
+    });
+
+    const msg = saved
+      ? this.config.language === 'es'
+        ? `Aprendizaje guardado en \`.ai-review-learnings.md\` (rama \`${ctx.baseRefName}\`). Se va a tener en cuenta en las próximas reviews de este repo.`
+        : `Learning saved to \`.ai-review-learnings.md\` (branch \`${ctx.baseRefName}\`). It'll apply to future reviews in this repo.`
+      : this.config.language === 'es'
+        ? 'No se pudo guardar el aprendizaje (conflicto al commitear). Probá de nuevo.'
+        : "Couldn't save the learning (commit conflict). Try again.";
+
+    await this.postReply(event, msg);
+    console.log(chalk.dim(`@botai learn: ${saved ? 'guardado' : 'falló al guardar'} — "${text}"`));
+  }
+
+  /** `@botai ask """question"""` — general-purpose Q&A, never triggers a re-review. */
+  private async handleAsk(event: FeedbackEvent, question: string): Promise<void> {
+    if (!question) {
+      await this.postReply(
+        event,
+        this.config.language === 'es'
+          ? 'Usá `@botai ask """tu pregunta"""`.'
+          : 'Use `@botai ask """your question"""`.',
+      );
+      return;
+    }
+
+    const { contextKind, context } = await this.gatherAskContext(event);
+
+    const prompt = this.promptBuilder.buildAskPrompt({
+      question,
+      contextKind,
+      context,
+      language: this.config.language,
+    });
+
+    let reply: string;
+    try {
+      reply = (await this.llmCall(prompt)).trim();
+    } catch {
+      return;
+    }
+    if (!reply) return;
+
+    await this.postReply(event, reply.slice(0, 4000));
+    console.log(chalk.dim('@botai ask: respondido.'));
+  }
+
+  private async gatherAskContext(
+    event: FeedbackEvent,
+  ): Promise<{ contextKind: 'file-window' | 'pr-summary'; context: string }> {
+    if (event.inReplyToId !== null) {
+      const parentComment = await this.githubClient.getReviewComment(event.owner, event.repo, event.inReplyToId);
+      if (parentComment?.line) {
+        const fileContent = await this.githubClient.getFileAtRef({
+          owner: event.owner,
+          repo: event.repo,
+          path: parentComment.path,
+          ref: event.headSha ?? 'HEAD',
+        });
+        return { contextKind: 'file-window', context: this.extractLineWindow(fileContent, parentComment.line) };
+      }
+    }
+
+    const summaryCommentId = await this.githubClient.findBotSummaryCommentId(event.owner, event.repo, event.pullNumber);
+    const summaryComment =
+      summaryCommentId !== 0 ? await this.githubClient.getIssueComment(event.owner, event.repo, summaryCommentId) : null;
+
+    return { contextKind: 'pr-summary', context: summaryComment?.body ?? '' };
   }
 
   private async markResolved(args: {

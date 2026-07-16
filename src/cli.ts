@@ -237,6 +237,14 @@ officialDocs:
   enabled: false
   provider: none   # 'context7' to enable
 
+# Persistent cross-PR Learnings (opt-in). Rules captured via @botai learn
+# or auto-captured from @botai dismiss are committed to
+# .ai-review-learnings.md on the PR's base branch and applied to every
+# future review of that branch — requires contents: write on the workflow.
+# learnings:
+#   enabled: true
+#   maxChars: 4000
+
 # Additional instructions appended to the system prompt.
 # customInstructions: |
 #   This project follows strict Clean Architecture. Any import from a domain

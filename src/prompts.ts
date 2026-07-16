@@ -10,6 +10,13 @@ interface ExplainPromptArgs {
   language: 'es' | 'en';
 }
 
+interface AskPromptArgs {
+  question: string;
+  contextKind: 'file-window' | 'pr-summary';
+  context: string;
+  language: 'es' | 'en';
+}
+
 interface SystemPromptArgs {
   config: ReviewerConfig;
   tech: TechStack;
@@ -385,6 +392,35 @@ ${langInstruction}`,
       `\`\`\``,
       ``,
       `Explain why this matters, the concrete failure scenario it can cause, and a concrete fix (with a short code snippet when useful). Be practical and specific to the code shown.`,
+      langInstruction,
+    ].join('\n');
+  }
+
+  buildAskPrompt(args: AskPromptArgs): string {
+    const { question, contextKind, context, language } = args;
+
+    const langInstruction =
+      language === 'es'
+        ? 'Respondé en español rioplatense, claro y directo. Devolvé SOLO texto markdown (sin JSON).'
+        : 'Answer in clear, direct English. Return ONLY markdown text (no JSON).';
+
+    const contextLabel =
+      contextKind === 'file-window'
+        ? 'Current file state around the comment:'
+        : 'Pull request summary and description:';
+
+    return [
+      `You are a Senior Staff Engineer. A developer asked a free-form question about this pull request — it is not necessarily about one specific finding.`,
+      ``,
+      `**Question:**`,
+      question,
+      ``,
+      `**${contextLabel}**`,
+      `\`\`\``,
+      context,
+      `\`\`\``,
+      ``,
+      `Answer the question directly using only the context given. If the context doesn't contain enough information to answer confidently, say so instead of guessing.`,
       langInstruction,
     ].join('\n');
   }
