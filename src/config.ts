@@ -69,7 +69,9 @@ export const DEFAULT_CONFIG: ReviewerConfig = {
     docsGlobs: [
       'CLAUDE.md',
       'docs/**/architecture*.md',
+      'docs/adr/**/*.md',
       'docs/**/adr/**/*.md',
+      'docs/**/ADR-*.md',
       'docs/**/*-rules*.md',
       'docs/**/conventions*.md',
       'docs/**/domain*.md',
@@ -218,10 +220,13 @@ export class ConfigLoader {
    */
   static matchesPattern(path: string, pattern: string): boolean {
     const DOUBLE_STAR = '\x00DOUBLESTAR\x00';
-    const regex = pattern
-      .replace(/\*\*/g, DOUBLE_STAR)
+    // Normalize `/**/` so `**` can match zero directories (e.g. docs/adr/*.md via docs/adr/**/*.md).
+    const normalized = pattern.replace(/\/\*\*\//g, `/${DOUBLE_STAR}/`).replace(/\*\*/g, DOUBLE_STAR);
+    const regex = normalized
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
       .replace(/\*/g, '[^/]*')
+      .replace(new RegExp(`${DOUBLE_STAR}/`, 'g'), '(?:.*/)?')
+      .replace(new RegExp(`/${DOUBLE_STAR}`, 'g'), '(?:/.*)?')
       .replace(new RegExp(DOUBLE_STAR, 'g'), '.*');
     return new RegExp(`^${regex}$`).test(path);
   }

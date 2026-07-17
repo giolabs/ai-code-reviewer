@@ -28,7 +28,7 @@
 - Lying comments (outdated relative to the actual code).
 
 ## Testing
-- New logic without tests when the repo already has a test infrastructure.
+- New logic without tests when the repo already has a test infrastructure — but ONLY after verifying the sibling/full-file test context does not already cover the case.
 - Tests that depend on execution order.
 - Tests that mock what they are actually testing.
 - Vague assertions (toBeTruthy instead of toBe(specificValue)).
@@ -42,3 +42,8 @@
 - Code style that the project's formatter already handles.
 - Personal preferences without a technical reason.
 - "This could be done differently" without a concrete problem.
+- Asking for docs, dartdoc, comments, or placeholders that already exist in the full file or sibling context.
+- Scope creep: features/improvements not required by the PR description, AC, or ADRs (e.g. progressive-loading skeletons, CloudFront, live network checks in CI).
+- Flagging intentional design that project ADRs/CLAUDE.md/docs explicitly authorize (e.g. public-read brand assets for MVP).
+- Demanding non-hermetic CI (live HTTP/S3/network) when hermetic unit tests exist or a script is documented as manual ops.
+- Forward-looking ops reminders (future staging origins, envs that do not exist yet) — those are notes, not findings.

@@ -10,6 +10,15 @@ interface ProjectKnowledgeDigestDeps {
 
 interface BuildDigestArgs {
   config: ProjectContextConfig;
+  /** Changed file paths (repo-relative) — used to rank ADRs/docs before truncation. */
+  changedPaths?: ReadonlyArray<string>;
+  prTitle?: string;
+  prBody?: string | null;
+}
+
+interface RankedDoc {
+  path: string;
+  score: number;
 }
 
 export interface ProjectKnowledgeResult {
@@ -22,7 +31,7 @@ export interface ProjectKnowledgeResult {
 /**
  * Reads project-authority documents (CLAUDE.md + selected docs/) and assembles
  * a bounded knowledge digest injected into the review prompt (Axis 7).
- * The digest is authority ABOVE the generic stack rules — see spec §2.
+ * When PR/diff hints are provided, ranks docs by relevance before truncation.
  */
 export class ProjectKnowledgeDigest {
   private static readonly MAX_WALK_FILES = 400;
@@ -31,7 +40,12 @@ export class ProjectKnowledgeDigest {
 
   build(args: BuildDigestArgs): ProjectKnowledgeResult {
     const { config } = args;
-    const files = this.collectRelevantFiles(config);
+    const files = this.collectRelevantFiles({
+      config,
+      changedPaths: args.changedPaths ?? [],
+      prTitle: args.prTitle,
+      prBody: args.prBody,
+    });
 
     if (files.length === 0) {
       return { digest: '', hash: '' };
@@ -63,22 +77,86 @@ export class ProjectKnowledgeDigest {
     };
   }
 
-  private collectRelevantFiles(config: ProjectContextConfig): ReadonlyArray<string> {
-    const result: string[] = [];
+  private collectRelevantFiles(args: {
+    config: ProjectContextConfig;
+    changedPaths: ReadonlyArray<string>;
+    prTitle?: string;
+    prBody?: string | null;
+  }): ReadonlyArray<string> {
+    const { config, changedPaths, prTitle, prBody } = args;
+    const claudeFirst: string[] = [];
+    const docs: string[] = [];
 
     if (config.claudeMd && existsSync(resolve(this.deps.cwd, 'CLAUDE.md'))) {
-      result.push('CLAUDE.md');
+      claudeFirst.push('CLAUDE.md');
     }
 
     const candidates = this.walkMarkdown(this.deps.cwd);
     for (const relPath of candidates) {
       if (relPath === 'CLAUDE.md') continue;
       if (config.docsGlobs.some((glob) => ConfigLoader.matchesPattern(relPath, glob))) {
-        result.push(relPath);
+        docs.push(relPath);
       }
     }
 
-    return result;
+    const keywords = this.extractKeywords({ prTitle, prBody, changedPaths });
+    const ranked: RankedDoc[] = docs.map((path) => ({
+      path,
+      score: this.scoreDoc({ path, changedPaths, keywords }),
+    }));
+    ranked.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+
+    return [...claudeFirst, ...ranked.map((r) => r.path)];
+  }
+
+  private extractKeywords(args: {
+    prTitle?: string;
+    prBody?: string | null;
+    changedPaths: ReadonlyArray<string>;
+  }): ReadonlyArray<string> {
+    const blob = [args.prTitle ?? '', args.prBody ?? '', ...args.changedPaths].join(' ');
+    const tokens = new Set<string>();
+
+    for (const match of blob.matchAll(/\b(?:ADR|US)[-_]?\d+\b/gi)) {
+      tokens.add(match[0].toLowerCase());
+    }
+
+    for (const match of blob.matchAll(/[a-zA-Z][a-zA-Z0-9_-]{3,}/g)) {
+      tokens.add(match[0].toLowerCase());
+    }
+
+    return [...tokens];
+  }
+
+  private scoreDoc(args: {
+    path: string;
+    changedPaths: ReadonlyArray<string>;
+    keywords: ReadonlyArray<string>;
+  }): number {
+    const { path, changedPaths, keywords } = args;
+    const lowerPath = path.toLowerCase();
+    let score = 0;
+
+    if (lowerPath.includes('/adr/') || lowerPath.includes('adr-')) {
+      score += 20;
+    }
+
+    for (const changed of changedPaths) {
+      const segments = changed.toLowerCase().split('/').filter(Boolean);
+      for (const seg of segments) {
+        if (seg.length >= 3 && lowerPath.includes(seg)) {
+          score += 5;
+        }
+      }
+    }
+
+    for (const keyword of keywords) {
+      if (lowerPath.includes(keyword)) {
+        score += keyword.startsWith('adr') || keyword.startsWith('us') ? 30 : 3;
+      }
+    }
+
+    return score;
   }
 
   private walkMarkdown(root: string): ReadonlyArray<string> {

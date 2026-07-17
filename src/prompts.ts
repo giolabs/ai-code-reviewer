@@ -33,6 +33,8 @@ interface UserPromptArgs {
   prTitle?: string;
   prBody?: string | null;
   maxTotalChars?: number;
+  /** Budgeted sibling tests / infra READMEs for anti-FP grounding. */
+  siblingContext?: string;
 }
 
 interface IncrementalUserPromptArgs {
@@ -40,6 +42,7 @@ interface IncrementalUserPromptArgs {
   priorFindings: ReadonlyArray<PriorFinding>;
   prTitle?: string;
   maxTotalChars?: number;
+  siblingContext?: string;
 }
 
 export class PromptBuilder {
@@ -87,6 +90,7 @@ ${mergedRulesText || '(no rules — apply general best practices)'}`,
       );
     }
 
+    sections.push(this.buildActionableFindingGate());
     sections.push(this.buildDetectionChecklist());
 
     if (args.dependencyIndex) {
@@ -132,12 +136,24 @@ ${langInstruction}`,
     ].join('\n\n');
   }
 
+  private buildActionableFindingGate(): string {
+    return [
+      `**Actionable finding gate — every finding MUST be a defect verifiable NOW in the diff / full file / sibling context:**`,
+      `- Already present: do NOT ask for docs, dartdoc, comments, or tests that already exist in the full file or sibling test/README context.`,
+      `- Scope creep: do NOT request features or polish outside the PR description / AC / ADRs (placeholders, CloudFront, live network CI, etc.).`,
+      `- Documented intentional design: if ADRs/CLAUDE.md/docs authorize a pattern, do NOT report it as a defect (ops notes belong in the summary only, never as inline findings).`,
+      `- Hermetic testing: do NOT demand live HTTP/S3/network checks in CI when hermetic unit tests exist or a script is documented as manual.`,
+      `- Future ops: do NOT file findings about environments, origins, or configs that do not exist yet ("when staging exists…").`,
+      `- Prefer zero findings over speculative "consider / document / integrate" suggestions.`,
+    ].join('\n');
+  }
+
   private buildDetectionChecklist(): string {
     return [
       `**Detection checklist — reason explicitly through each axis before finalizing findings:**`,
       `- Regression: for each importer/caller in the dependency context, reason whether a changed signature, return contract, or side effect could break it.`,
       `- Silent failures: empty \`catch\`, swallowed errors, un-awaited promises, defaults that hide failures, \`?.\` masking an unexpected null, ignored return values.`,
-      `- Technical debt: duplication, tight coupling, and workarounds marked as temporary (report as \`info\`/\`minor\`, category \`maintainability\`).`,
+      `- Technical debt: ONLY report duplication, tight coupling, or temporary workarounds when they are a concrete defect or risk visible in the diff — never "consider X" polish (category \`maintainability\`, severity \`info\`/\`minor\`).`,
       `- Domain violations: business logic in the wrong layer, broken invariants, contradictions with the project rules above (category \`architecture\` or \`bug-risk\`).`,
       `- Architecture patterns: layer-boundary violations (e.g. controller→service→repository), broken dependency inversion, inconsistency with the surrounding module's established pattern (category \`architecture\`).`,
     ].join('\n');
@@ -157,7 +173,7 @@ ${langInstruction}`,
    * to avoid blowing the context window.
    */
   buildUserPrompt(args: UserPromptArgs): string {
-    const { files, prTitle, prBody, maxTotalChars = 80_000 } = args;
+    const { files, prTitle, prBody, maxTotalChars = 80_000, siblingContext } = args;
 
     const parts: string[] = [];
 
@@ -203,6 +219,11 @@ ${langInstruction}`,
     }
 
     parts.push(fileChunks.join('\n\n'));
+
+    if (siblingContext && totalChars + siblingContext.length <= maxTotalChars) {
+      parts.push(siblingContext);
+    }
+
     parts.push(
       `\nReview the changes following the rules and instructions in the system prompt. Return the response in the required JSON format.`,
     );
@@ -250,6 +271,8 @@ ${mergedRulesText || '(no rules — apply general best practices)'}`,
       sections.push(this.buildProjectAuthoritySection(args.projectDigest));
     }
 
+    sections.push(this.buildActionableFindingGate());
+
     if (args.dependencyIndex) {
       sections.push(args.dependencyIndex);
     }
@@ -277,7 +300,7 @@ ${langInstruction}`,
   }
 
   buildIncrementalUserPrompt(args: IncrementalUserPromptArgs): string {
-    const { files, priorFindings, prTitle, maxTotalChars = 80_000 } = args;
+    const { files, priorFindings, prTitle, maxTotalChars = 80_000, siblingContext } = args;
 
     const parts: string[] = [];
 
@@ -323,6 +346,11 @@ ${langInstruction}`,
     }
 
     parts.push(fileChunks.join('\n\n'));
+
+    if (siblingContext && totalChars + siblingContext.length <= maxTotalChars) {
+      parts.push(siblingContext);
+    }
+
     parts.push(
       `Review only the new changes. Flag regressions or new critical/major issues specifically related to the prior findings above. If the new changes partially or fully address a prior finding, do NOT re-flag it. Return the response in the required JSON format.`,
     );

@@ -133,6 +133,12 @@ describe('ConfigLoader', () => {
       // Arrange / Act / Assert
       expect(ConfigLoader.matchesPattern('src/foo.ts', 'node_modules/**')).toBe(false);
     });
+
+    it('should let **/ match zero directories under docs/adr', () => {
+      // Arrange / Act / Assert
+      expect(ConfigLoader.matchesPattern('docs/adr/ADR-016.md', 'docs/adr/**/*.md')).toBe(true);
+      expect(ConfigLoader.matchesPattern('docs/adr/ADR-016.md', 'docs/**/adr/**/*.md')).toBe(true);
+    });
   });
 
   describe('filterIgnored (static)', () => {

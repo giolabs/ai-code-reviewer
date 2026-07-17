@@ -115,6 +115,21 @@ describe('PromptBuilder', () => {
       // Assert
       expect(result).toContain('Next.js');
     });
+
+    it('should include the actionable finding gate anti-FP rules', () => {
+      // Arrange
+      const config = makeConfig();
+
+      // Act
+      const result = builder.buildSystemPrompt({ config, tech: 'typescript', mergedRulesText: '' });
+
+      // Assert
+      expect(result).toContain('Actionable finding gate');
+      expect(result).toContain('Already present');
+      expect(result).toContain('Scope creep');
+      expect(result).toContain('Hermetic testing');
+      expect(result).toContain('Future ops');
+    });
   });
 
   describe('buildUserPrompt', () => {

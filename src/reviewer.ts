@@ -14,6 +14,7 @@ import { createLLMAdapter } from './llm/factory.js';
 import { ReviewJsonParser } from './llm/json-parser.js';
 import { ProjectKnowledgeDigest } from './project-knowledge.js';
 import { FindingVerifier } from './finding-verifier.js';
+import { SiblingContextLoader } from './sibling-context.js';
 import {
   GitHubClient,
   buildDiffLineMap,
@@ -265,13 +266,15 @@ interface ReviewStackGroupArgs {
   config: ReviewerConfig;
   mergedRulesText: string;
   resolvedModel: string;
+  /** Repo checkout root — sibling tests/READMEs resolve from here. */
+  cwd: string;
   projectDigest?: string;
   formatter: OutputFormatter;
 }
 
 /** Full review of one stack group: dependency graph, file content budget, LLM call, severity filter. */
 async function reviewStackGroup(args: ReviewStackGroupArgs): Promise<ReviewResult> {
-  const { group, ctx, githubClient, config, mergedRulesText, resolvedModel, projectDigest, formatter } = args;
+  const { group, ctx, githubClient, config, mergedRulesText, resolvedModel, cwd, projectDigest, formatter } = args;
 
   console.log(
     chalk.dim(`Grupo "${group.dir}" (${TechDetector.displayName(group.tech)}): ${group.files.length} archivo(s).`),
@@ -311,6 +314,8 @@ async function reviewStackGroup(args: ReviewStackGroupArgs): Promise<ReviewResul
     resolvedModel,
     dependencyIndex,
     projectDigest,
+    cwd,
+    knowledgeCwd: group.appCwd,
   });
 
   result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
@@ -325,6 +330,7 @@ interface ReviewStackGroupIncrementalArgs {
   config: ReviewerConfig;
   mergedRulesText: string;
   resolvedModel: string;
+  cwd: string;
   projectDigest?: string;
   priorFindings: ReadonlyArray<PriorFinding>;
   formatter: OutputFormatter;
@@ -332,7 +338,14 @@ interface ReviewStackGroupIncrementalArgs {
 
 /** Incremental (verify-only) review of one stack group. */
 async function reviewStackGroupIncremental(args: ReviewStackGroupIncrementalArgs): Promise<ReviewResult> {
-  const { group, ctx, config, mergedRulesText, resolvedModel, projectDigest, priorFindings, formatter } = args;
+  const { group, ctx, config, mergedRulesText, resolvedModel, cwd, projectDigest, priorFindings, formatter } = args;
+
+  const sibling = new SiblingContextLoader({ cwd }).load({
+    changedPaths: group.files.map((f) => f.path),
+  });
+  if (sibling.fileCount > 0) {
+    console.log(chalk.dim(`Contexto hermano: ${sibling.fileCount} archivo(s).`));
+  }
 
   const promptBuilder = new PromptBuilder();
   const systemPrompt = promptBuilder.buildIncrementalSystemPrompt({
@@ -345,6 +358,7 @@ async function reviewStackGroupIncremental(args: ReviewStackGroupIncrementalArgs
     files: group.files,
     priorFindings,
     prTitle: ctx.title,
+    siblingContext: sibling.text || undefined,
   });
 
   const llmConfig: LLMConfig = {
@@ -439,6 +453,7 @@ async function runIncrementalReview(args: {
         config,
         mergedRulesText: buildRulesForTech(group.tech),
         resolvedModel,
+        cwd,
         projectDigest,
         priorFindings: groupPriorFindings,
         formatter,
@@ -653,6 +668,7 @@ export async function reviewPullRequest(
       config,
       mergedRulesText: buildRulesForTech(group.tech),
       resolvedModel,
+      cwd,
       projectDigest,
       formatter,
     });
@@ -877,7 +893,7 @@ function extractSummaryForPost(result: ReviewResult): string {
 }
 
 export async function reviewSingleFile(filePath: string, opts: ReviewerCliOptions): Promise<void> {
-  const { config, mergedRulesText, tech, resolvedModel } = resolveConfig(opts);
+  const { config, mergedRulesText, tech, resolvedModel, cwd, appCwd, projectDigest } = resolveConfig(opts);
   const formatter = new OutputFormatter();
 
   const absPath = resolve(process.cwd(), filePath);
@@ -898,6 +914,7 @@ export async function reviewSingleFile(filePath: string, opts: ReviewerCliOption
     patch,
     additions: lines.length,
     deletions: 0,
+    content,
   };
 
   const result = await callLLM({
@@ -906,6 +923,9 @@ export async function reviewSingleFile(filePath: string, opts: ReviewerCliOption
     mergedRulesText,
     tech,
     resolvedModel,
+    projectDigest,
+    cwd,
+    knowledgeCwd: appCwd,
   });
 
   result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
@@ -921,7 +941,7 @@ export async function reviewSingleFile(filePath: string, opts: ReviewerCliOption
 export async function reviewLocalDiff(
   opts: ReviewerCliOptions & { staged?: boolean; base?: string },
 ): Promise<void> {
-  const { config, mergedRulesText, tech, resolvedModel } = resolveConfig(opts);
+  const { config, mergedRulesText, tech, resolvedModel, cwd, appCwd, projectDigest } = resolveConfig(opts);
   const formatter = new OutputFormatter();
 
   const diffArgs = opts.staged
@@ -960,6 +980,9 @@ export async function reviewLocalDiff(
     mergedRulesText,
     tech,
     resolvedModel,
+    projectDigest,
+    cwd,
+    knowledgeCwd: appCwd,
   });
 
   result.findings = formatter.filterBySeverity(result.findings, config.minSeverity);
@@ -982,8 +1005,42 @@ async function callLLM(args: {
   resolvedModel: string;
   dependencyIndex?: string;
   projectDigest?: string;
+  /** Repo root for sibling context resolution. */
+  cwd: string;
+  /** Directory used to walk CLAUDE.md / docs for the knowledge digest. */
+  knowledgeCwd?: string;
 }): Promise<ReviewResult> {
-  const { files, prTitle, prBody, config, mergedRulesText, tech, resolvedModel, dependencyIndex, projectDigest } = args;
+  const {
+    files,
+    prTitle,
+    prBody,
+    config,
+    mergedRulesText,
+    tech,
+    resolvedModel,
+    dependencyIndex,
+    cwd,
+  } = args;
+
+  const knowledgeCwd = args.knowledgeCwd ?? cwd;
+  let projectDigest = args.projectDigest;
+  if (config.projectContext) {
+    const knowledge = new ProjectKnowledgeDigest({ cwd: knowledgeCwd });
+    const built = knowledge.build({
+      config: config.projectContext,
+      changedPaths: files.map((f) => f.path),
+      prTitle,
+      prBody,
+    });
+    projectDigest = built.digest || undefined;
+  }
+
+  const sibling = new SiblingContextLoader({ cwd }).load({
+    changedPaths: files.map((f) => f.path),
+  });
+  if (sibling.fileCount > 0) {
+    console.log(chalk.dim(`Contexto hermano: ${sibling.fileCount} archivo(s).`));
+  }
 
   const promptBuilder = new PromptBuilder();
   const systemPrompt = promptBuilder.buildSystemPrompt({
@@ -993,7 +1050,12 @@ async function callLLM(args: {
     dependencyIndex,
     projectDigest,
   });
-  const userPrompt = promptBuilder.buildUserPrompt({ files, prTitle, prBody });
+  const userPrompt = promptBuilder.buildUserPrompt({
+    files,
+    prTitle,
+    prBody,
+    siblingContext: sibling.text || undefined,
+  });
 
   const llmConfig: LLMConfig = {
     provider: config.provider,
@@ -1020,6 +1082,7 @@ async function callLLM(args: {
       findings: parsed.findings,
       diffText: userPrompt,
       confidenceThreshold: config.selfCritique.confidenceThreshold,
+      projectDigest,
     });
     const dropped = before - parsed.findings.length;
     if (dropped > 0) {
