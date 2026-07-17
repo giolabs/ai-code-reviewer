@@ -209,19 +209,88 @@ export class FeedbackHandler {
 
     await this.postReply(event, replyBody);
 
+    const dismissMessage =
+      this.config.language === 'es'
+        ? `Review descartado: @${event.actor} aprobó el PR vía @botai.`
+        : `Review dismissed: @${event.actor} approved the PR via @botai.`;
+
+    await this.githubClient.dismissBotChangesRequestedReviews({
+      owner: event.owner,
+      repo: event.repo,
+      pullNumber: event.pullNumber,
+      message: dismissMessage,
+    });
+
     const approvalBody =
       this.config.language === 'es'
         ? `PR aprobado por @${event.actor} vía @botai.`
         : `PR approved by @${event.actor} via @botai.`;
 
-    await this.githubClient.submitApprovalReview({
+    const approved = await this.githubClient.submitApprovalReview({
       owner: event.owner,
       repo: event.repo,
       pullNumber: event.pullNumber,
       body: approvalBody,
     });
 
+    if (!approved) {
+      const errorBody =
+        this.config.language === 'es'
+          ? 'No se pudo aprobar el PR. Revisá permisos del token (`pull-requests: write`) y que el bot pueda aprobar reviews.'
+          : 'Could not approve the PR. Check token permissions (`pull-requests: write`) and that the bot can approve reviews.';
+      await this.postReply(event, errorBody);
+      console.log(chalk.yellow(`No se pudo aprobar el PR tras @botai approved de @${event.actor}.`));
+      return;
+    }
+
+    await this.suppressOpenBotFindings(event);
     console.log(chalk.green(`PR aprobado por @${event.actor}.`));
+  }
+
+  /** Suppresses every open bot finding so they are not re-flagged after a human override approve. */
+  private async suppressOpenBotFindings(event: FeedbackEvent): Promise<void> {
+    const comments = await this.githubClient.getPullRequestReviewComments(
+      event.owner,
+      event.repo,
+      event.pullNumber,
+    );
+
+    let suppressed = 0;
+    for (const comment of comments) {
+      if (comment.user !== BOT_ACTOR) continue;
+      const metadata = this.githubClient.extractFindingMetadata(comment.body);
+      if (!metadata || metadata.status !== FindingStatus.Open) continue;
+
+      await this.githubClient.addSuppressedFingerprint({
+        owner: event.owner,
+        repo: event.repo,
+        pullNumber: event.pullNumber,
+        fingerprint: metadata.id,
+      });
+
+      const updatedMetadata: FindingMetadata = {
+        ...metadata,
+        status: FindingStatus.Dismissed,
+        dismissedBy: event.actor,
+      };
+      const updatedBody = this.githubClient.embedFindingMetadata(comment.body, updatedMetadata);
+      await this.githubClient.editComment({
+        owner: event.owner,
+        repo: event.repo,
+        commentId: metadata.commentId || comment.id,
+        body: updatedBody,
+        isPrReviewComment: true,
+      });
+
+      if (metadata.threadNodeId) {
+        await this.githubClient.resolveThread({ threadNodeId: metadata.threadNodeId });
+      }
+      suppressed += 1;
+    }
+
+    if (suppressed > 0) {
+      console.log(chalk.dim(`@botai approved: ${suppressed} finding(s) abiertos suprimidos.`));
+    }
   }
 
   private async handleReview(args: {

@@ -71,7 +71,10 @@ function makeGitHubClient(
     resolveThread: vi.fn().mockResolvedValue(undefined),
     postReply: vi.fn().mockResolvedValue(undefined),
     getFileAtRef: vi.fn().mockResolvedValue(null),
-    submitApprovalReview: vi.fn().mockResolvedValue(undefined),
+    submitApprovalReview: vi.fn().mockResolvedValue(true),
+    dismissBotChangesRequestedReviews: vi.fn().mockResolvedValue(1),
+    getPullRequestReviewComments: vi.fn().mockResolvedValue([]),
+    addSuppressedFingerprint: vi.fn().mockResolvedValue(undefined),
     countOpenBotFindings: vi.fn().mockResolvedValue(0),
     postPullRequestComment: vi.fn().mockResolvedValue(undefined),
     findBotSummaryCommentId: vi.fn().mockResolvedValue(0),
@@ -178,6 +181,84 @@ describe('FeedbackHandler', () => {
 
       // Assert
       expect(client.submitApprovalReview).toHaveBeenCalledOnce();
+    });
+
+    it('should dismiss bot CHANGES_REQUESTED reviews before approving', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient();
+      const callOrder: string[] = [];
+      vi.mocked(client.dismissBotChangesRequestedReviews).mockImplementation(async () => {
+        callOrder.push('dismiss');
+        return 2;
+      });
+      vi.mocked(client.submitApprovalReview).mockImplementation(async () => {
+        callOrder.push('approve');
+        return true;
+      });
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(
+        makeFeedbackEvent({ commentBody: '@botai approved', inReplyToId: null, source: 'issue_comment' }),
+      );
+
+      // Assert
+      expect(callOrder).toEqual(['dismiss', 'approve']);
+      expect(client.dismissBotChangesRequestedReviews).toHaveBeenCalledOnce();
+    });
+
+    it('should reply with an error and skip suppress when APPROVE fails', async () => {
+      // Arrange
+      const config = makeConfig();
+      const client = makeGitHubClient();
+      vi.mocked(client.submitApprovalReview).mockResolvedValue(false);
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(
+        makeFeedbackEvent({ commentBody: '@botai approved', inReplyToId: null, source: 'issue_comment' }),
+      );
+
+      // Assert
+      expect(client.postPullRequestComment).toHaveBeenCalledTimes(2);
+      const secondReply = vi.mocked(client.postPullRequestComment).mock.calls[1][0];
+      expect(secondReply.body).toContain('No se pudo aprobar');
+      expect(client.addSuppressedFingerprint).not.toHaveBeenCalled();
+      expect(client.getPullRequestReviewComments).not.toHaveBeenCalled();
+    });
+
+    it('should suppress open bot findings after a successful approve', async () => {
+      // Arrange
+      const config = makeConfig();
+      const openMeta = makeMetadata({ id: 'fp-open-1', status: FindingStatus.Open, commentId: 55 });
+      const client = makeGitHubClient(openMeta);
+      const openBody = `Finding\n<!-- ai-review-finding:${JSON.stringify(openMeta)} -->`;
+      vi.mocked(client.getPullRequestReviewComments).mockResolvedValue([
+        {
+          id: 55,
+          nodeId: 'PRRC_1',
+          body: openBody,
+          path: 'src/auth.ts',
+          line: 42,
+          user: 'github-actions[bot]',
+          pullRequestReviewId: 9,
+        },
+      ]);
+      vi.mocked(client.extractFindingMetadata).mockReturnValue(openMeta);
+      const handler = new FeedbackHandler({ githubClient: client, config, llmCall: vi.fn() });
+
+      // Act
+      await handler.handle(
+        makeFeedbackEvent({ commentBody: '@botai approved', inReplyToId: null, source: 'issue_comment' }),
+      );
+
+      // Assert
+      expect(client.addSuppressedFingerprint).toHaveBeenCalledWith(
+        expect.objectContaining({ fingerprint: 'fp-open-1' }),
+      );
+      expect(client.editComment).toHaveBeenCalledOnce();
+      expect(client.resolveThread).toHaveBeenCalledWith({ threadNodeId: 'TH_abc' });
     });
   });
 

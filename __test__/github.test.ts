@@ -714,7 +714,7 @@ describe('getReviewCommentEventFromEnv headSha', () => {
 });
 
 describe('GitHubClient.submitApprovalReview', () => {
-  it('should call pulls.createReview with event APPROVE', async () => {
+  it('should call pulls.createReview with event APPROVE and return true', async () => {
     // Arrange
     const client = new GitHubClient({ token: 'fake-token' });
     const mockCreateReview = vi.fn().mockResolvedValue({});
@@ -723,9 +723,10 @@ describe('GitHubClient.submitApprovalReview', () => {
     };
 
     // Act
-    await client.submitApprovalReview({ owner: 'org', repo: 'repo', pullNumber: 1, body: 'LGTM' });
+    const ok = await client.submitApprovalReview({ owner: 'org', repo: 'repo', pullNumber: 1, body: 'LGTM' });
 
     // Assert
+    expect(ok).toBe(true);
     expect(mockCreateReview).toHaveBeenCalledWith({
       owner: 'org',
       repo: 'repo',
@@ -735,17 +736,55 @@ describe('GitHubClient.submitApprovalReview', () => {
     });
   });
 
-  it('should not throw when the API call fails', async () => {
+  it('should return false when the API call fails', async () => {
     // Arrange
     const client = new GitHubClient({ token: 'fake-token' });
     (client as unknown as Record<string, unknown>)['octokit'] = {
       pulls: { createReview: vi.fn().mockRejectedValue(new Error('forbidden')) },
     };
 
-    // Act + Assert
-    await expect(
-      client.submitApprovalReview({ owner: 'org', repo: 'repo', pullNumber: 1, body: '' }),
-    ).resolves.toBeUndefined();
+    // Act
+    const ok = await client.submitApprovalReview({ owner: 'org', repo: 'repo', pullNumber: 1, body: '' });
+
+    // Assert
+    expect(ok).toBe(false);
+  });
+});
+
+describe('GitHubClient.dismissBotChangesRequestedReviews', () => {
+  it('should dismiss only CHANGES_REQUESTED reviews from github-actions bot', async () => {
+    // Arrange
+    const client = new GitHubClient({ token: 'fake-token' });
+    const mockDismiss = vi.fn().mockResolvedValue({});
+    (client as unknown as Record<string, unknown>)['octokit'] = {
+      rest: {
+        pulls: {
+          listReviews: vi.fn().mockResolvedValue({
+            data: [
+              { id: 1, state: 'CHANGES_REQUESTED', user: { login: 'github-actions[bot]' } },
+              { id: 2, state: 'APPROVED', user: { login: 'github-actions[bot]' } },
+              { id: 3, state: 'CHANGES_REQUESTED', user: { login: 'human' } },
+            ],
+          }),
+          dismissReview: mockDismiss,
+        },
+      },
+    };
+
+    // Act
+    const count = await client.dismissBotChangesRequestedReviews({
+      owner: 'org',
+      repo: 'repo',
+      pullNumber: 1,
+      message: 'dismissed',
+    });
+
+    // Assert
+    expect(count).toBe(1);
+    expect(mockDismiss).toHaveBeenCalledOnce();
+    expect(mockDismiss).toHaveBeenCalledWith(
+      expect.objectContaining({ review_id: 1, message: 'dismissed' }),
+    );
   });
 });
 

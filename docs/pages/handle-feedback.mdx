@@ -8,7 +8,7 @@ The inline feedback feature lets developers interact with the bot directly from 
 
 | Reply | Where | What happens |
 |---|---|---|
-| `@botai approved` | Inline thread or general comment | The bot posts a reply acknowledging the approval, then submits a GitHub **APPROVE** review on the PR |
+| `@botai approved` | Inline thread or general comment | The bot acknowledges, **dismisses** its own prior `CHANGES_REQUESTED` reviews, submits a GitHub **APPROVE**, and **suppresses** open findings so they are not re-flagged on later pushes. Escape hatch after false-positive blocks. If APPROVE fails (permissions), it replies with an error. Note: a failed Actions check from `exit code 1` on an earlier `REQUEST_CHANGES` is separate — re-run that job or do not treat it as a required check if you rely on this override. |
 | `@botai review """your explanation"""` | Inline thread | The bot reads your explanation, fetches the current file state, and asks the LLM whether that one finding is resolved. It always posts a reply with its decision |
 | `@botai review` | General comment | Re-runs the **full PR review**, feeding in your explanation (quoted with `"""..."""` in the same comment, or written in earlier general comments since the bot's last review) so the model can recognize when a previously flagged concern is already addressed instead of repeating it |
 | `@botai resolved` | Inline thread | The bot immediately marks the finding as resolved and closes the thread. If all open bot findings are now resolved, it auto-approves the PR |

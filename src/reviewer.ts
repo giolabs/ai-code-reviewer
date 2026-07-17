@@ -23,7 +23,7 @@ import {
   getPullRequestContextFromEnv,
   getPushEventShasFromEnv,
 } from './github.js';
-import type { PrReview, PrReviewComment } from './github.js';
+import type { PrReviewComment } from './github.js';
 import { ThreadResolver } from './thread-resolver.js';
 import { ProjectContextStore, REVIEWER_VERSION } from './project-context.js';
 import { LearningsStore } from './learnings-store.js';
@@ -831,38 +831,14 @@ async function dismissBotReviews(
   githubClient: GitHubClient,
   ctx: PullRequestContext,
 ): Promise<void> {
-  let reviews: ReadonlyArray<PrReview>;
-  try {
-    reviews = await githubClient.listPullRequestReviews({
-      owner: ctx.owner,
-      repo: ctx.repo,
-      pullNumber: ctx.pullNumber,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.log(chalk.yellow(`  ⚠ No se pudieron obtener los reviews previos: ${msg}`));
-    return;
-  }
-
-  const botReviews = reviews.filter(
-    (r) => r.state === 'CHANGES_REQUESTED' && r.user?.login === 'github-actions[bot]',
-  );
-
-  for (const review of botReviews) {
-    console.log(chalk.dim(`  Descartando review #${review.id} del bot...`));
-    try {
-      await githubClient.dismissReview({
-        owner: ctx.owner,
-        repo: ctx.repo,
-        pullNumber: ctx.pullNumber,
-        reviewId: review.id,
-        message: 'Findings corregidos — review descartado automáticamente.',
-      });
-      console.log(chalk.dim(`  ✓ Review #${review.id} descartado.`));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log(chalk.yellow(`  ⚠ No se pudo descartar review #${review.id}: ${msg}`));
-    }
+  const dismissed = await githubClient.dismissBotChangesRequestedReviews({
+    owner: ctx.owner,
+    repo: ctx.repo,
+    pullNumber: ctx.pullNumber,
+    message: 'Findings corregidos — review descartado automáticamente.',
+  });
+  if (dismissed > 0) {
+    console.log(chalk.dim(`  ${dismissed} review(s) CHANGES_REQUESTED del bot descartado(s).`));
   }
 }
 

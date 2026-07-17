@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+- `@botai approved` now dismisses the bot's prior `CHANGES_REQUESTED` reviews before submitting `APPROVE`, and suppresses open finding fingerprints (marking them dismissed / resolving threads) so false positives that blocked the PR do not reappear on the next push. APPROVE failures are reported back in the PR thread instead of failing silently.
+
 ## [v0.1.0-beta.17] – 2026-07-17
 
 ### Features

@@ -88,6 +88,15 @@ interface DismissReviewOptions {
   message: string;
 }
 
+interface DismissBotChangesRequestedOptions {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  message: string;
+}
+
+const BOT_REVIEW_LOGIN = 'github-actions[bot]';
+
 export class GitHubClient {
   private readonly octokit: Octokit;
   private readonly graphqlWithAuth: typeof graphql;
@@ -593,6 +602,45 @@ export class GitHubClient {
     }
   }
 
+  /**
+   * Dismisses every `CHANGES_REQUESTED` review posted by github-actions[bot].
+   * Fail-soft on list errors; individual dismiss failures are logged and skipped.
+   */
+  async dismissBotChangesRequestedReviews(options: DismissBotChangesRequestedOptions): Promise<number> {
+    const { owner, repo, pullNumber, message } = options;
+    let reviews: ReadonlyArray<PrReview>;
+    try {
+      reviews = await this.listPullRequestReviews({ owner, repo, pullNumber });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[warn] No se pudieron obtener los reviews previos:', msg);
+      return 0;
+    }
+
+    const botReviews = reviews.filter(
+      (r) => r.state === 'CHANGES_REQUESTED' && r.user?.login === BOT_REVIEW_LOGIN,
+    );
+
+    let dismissed = 0;
+    for (const review of botReviews) {
+      try {
+        await this.dismissReview({
+          owner,
+          repo,
+          pullNumber,
+          reviewId: review.id,
+          message,
+        });
+        dismissed += 1;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[warn] No se pudo descartar review #${review.id}:`, msg);
+      }
+    }
+
+    return dismissed;
+  }
+
   async getCompareFiles(
     owner: string,
     repo: string,
@@ -766,7 +814,7 @@ export class GitHubClient {
     repo: string;
     pullNumber: number;
     body: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
     try {
       await this.octokit.pulls.createReview({
         owner: args.owner,
@@ -775,9 +823,11 @@ export class GitHubClient {
         event: 'APPROVE',
         body: args.body,
       });
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('[warn] No se pudo aprobar el PR:', msg);
+      return false;
     }
   }
 
