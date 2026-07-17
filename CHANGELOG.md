@@ -2,10 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [v0.1.0-beta.17] – 2026-07-17
 
 ### Features
 - false-positive reduction from production evidence (flowstore PR #76 corpus): Actionable finding gate in system prompts, expanded "What is NOT a finding" rules, `FindingVerifier` now receives the project authority digest and refutes already-present / scope-creep / intentional-ADR / non-hermetic-CI / future-ops findings, diff-ranked ADR/docs digest before truncation, and budgeted sibling test + infra README context in the user prompt.
+
+### Bug Fixes
+- `docs/adr/**/*.md` globs now match files directly under `docs/adr/` (`**` can match zero path segments), so ADRs are included in the project knowledge digest.
 
 ## [v0.1.0-beta.16] – 2026-07-15
 
